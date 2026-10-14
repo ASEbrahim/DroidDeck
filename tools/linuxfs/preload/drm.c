@@ -5,6 +5,7 @@
 #include <pthread.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <sys/file.h>
 #include <sys/ioctl.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
@@ -34,7 +35,9 @@ static int is_kgsl(int fd) {
   struct stat st;
   pthread_mutex_lock(&lock);
   if (kgsl_state == 0) {
-    kgsl_state = stat("/dev/kgsl-3d0", &st) == 0 ? 1 : -1;
+    /* KGSL, or the device the Mali bridge's session names as its render node (BL_DRM_STANDIN). */
+    const char *standin = getenv("BL_DRM_STANDIN");
+    kgsl_state = stat("/dev/kgsl-3d0", &st) == 0 || (standin && *standin && stat(standin, &st) == 0) ? 1 : -1;
     kgsl_dev = st.st_rdev;
   }
   pthread_mutex_unlock(&lock);
@@ -49,18 +52,52 @@ static void *real(const char *name) {
   return fn;
 }
 
+/*
+ * flock() locks belong to the file description: with an exclusive lock taken through a, b can
+ * take it too only if it is the same description (or another file, hence the inode check). The
+ * device refuses F_SETFL changes, so status flags can't serve. Called with the table lock held.
+ */
+static int same_by_flock(int a, int b) {
+  struct stat sa, sb;
+  if (fstat(a, &sa) || fstat(b, &sb) || sa.st_dev != sb.st_dev || sa.st_ino != sb.st_ino ||
+      flock(a, LOCK_EX | LOCK_NB)) {
+    return 0;
+  }
+  int same = flock(b, LOCK_EX | LOCK_NB) == 0;
+  flock(a, LOCK_UN);
+  return same;
+}
+
+/*
+ * Mesa keeps its own dup of the device (Zink's screen), so a caller such as Chromium's GBM
+ * wrapper asks with a different number for the same description. kcmp answers that, but Android
+ * app sandboxes refuse it (ENOSYS on the Tab S10+), which left every such lookup failing: Steam's
+ * browser GPU process got EINVAL from drmPrimeHandleToFD for each buffer and crashed.
+ */
 static int same_file_description(int a, int b) {
   if (a == b) {
     return 1;
   }
-#ifdef SYS_kcmp
   int saved_errno = errno;
-  long ret = syscall(SYS_kcmp, getpid(), getpid(), 0  , a, b);
-  errno = saved_errno;
-  return ret == 0;
-#else
-  return 0;
+  int ret = -1;
+#ifdef SYS_kcmp
+  static int kcmp_missing;
+  if (!kcmp_missing) {
+    long k = syscall(SYS_kcmp, getpid(), getpid(), 0 /* KCMP_FILE */, a, b);
+    if (k >= 0) {
+      ret = k == 0;
+    } else if (errno == ENOSYS || errno == EPERM) {
+      kcmp_missing = 1;
+    } else {
+      ret = 0;
+    }
+  }
 #endif
+  if (ret < 0) {
+    ret = same_by_flock(a, b);
+  }
+  errno = saved_errno;
+  return ret;
 }
 
 static int find_handle_locked(int fd, uint32_t handle) {

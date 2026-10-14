@@ -312,6 +312,7 @@ class SessionService : Service() {
         val fastPathAt = guest.size
 
         val pulse = startAudio(guest, sessionDir)
+        startVkBridge(guest, sessionDir)
 
         guest.add("BL_WIDTH=" + size.first)
         guest.add("BL_HEIGHT=" + size.second)
@@ -522,7 +523,9 @@ class SessionService : Service() {
         guest.add("LIBGL_KOPPER_DRI2=true")
         LinuxRuntime.vulkanIcd(this)?.let { guest.add("VK_ICD_FILENAMES=" + it.path) }
         val linuxDriverId = SessionPrefs.linuxDriver(this)
-        LinuxVulkanDriver.resolveIcdPath(this, linuxDriverId)
+        // With the Mali bridge on, the bridge ICD is the driver (startVkBridge); a Turnip import
+        // could not draw on this GPU anyway.
+        if (!com.droiddeck.launcher.core.DeviceSupport.vkBridge(this)) LinuxVulkanDriver.resolveIcdPath(this, linuxDriverId)
             ?.let { guest.add(LinuxVulkanDriver.ENV + "=" + it) }
         tuDebug(linuxDriverId)?.let { guest.add("TU_DEBUG=$it") }
         if (SessionPrefs.zinkLazy(this)) {
@@ -553,6 +556,35 @@ class SessionService : Service() {
         }
         CpuCores.gameLaunchList(SessionPrefs.gameCpus(this), clientPinned)
             .takeIf { it.isNotEmpty() }?.let { guest.add("BL_GAME_CPUS=$it") }
+    }
+
+    /**
+     * The Mali bridge (Setup's experimental switch, non-Adreno GPUs only): the server that runs the
+     * session's Vulkan calls on the phone's own driver, started before the guest. The session
+     * script points the Vulkan loader at the bridge ICD when it sees BL_VKBRIDGE and runs the
+     * bridge's self-test into the session log first; both sides log into the session folder.
+     */
+    private fun startVkBridge(guest: MutableList<String>, sessionDir: File) {
+        if (!com.droiddeck.launcher.core.DeviceSupport.vkBridge(this)) return
+        // Under the files dir, which the session binds at its own path: one string for both sides.
+        val socket = File(filesDir, "vkbridge/server.sock")
+        val bridge = com.droiddeck.launcher.gpu.VkBridgeComponent(socket, File(sessionDir, "vkbridge-server.log"))
+        bridge.attach(this)
+        components.add(bridge)
+        com.droiddeck.launcher.gpu.ClockLogComponent(File(sessionDir, "vkbridge-clocks.log")).let {
+            it.attach(this)
+            components.add(it)
+        }
+        guest.add("BL_VKBRIDGE=1")
+        guest.add("VKBRIDGE_SOCKET=" + socket.path)
+        guest.add("VKBRIDGE_CLIENT_LOG=" + File(sessionDir, "vkbridge-client.log").path)
+        // The render node gamescope sees is Mali's device standing in (LinuxRuntime.bindGpuNode):
+        // the ICD reports its numbers, and the session shim answers PRIME calls on it as on KGSL.
+        LinuxRuntime.gpuStandIn(this)?.let { node ->
+            guest.add("BL_DRM_STANDIN=$node")
+            LinuxRuntime.deviceNumbers(node)?.let { guest.add("VKBRIDGE_DRM_RENDER=$it") }
+        }
+        Log.i(TAG, "vkbridge: on (${com.droiddeck.launcher.core.DeviceSupport.gpuName(this)}), socket $socket")
     }
 
     private fun startAudio(guest: MutableList<String>, sessionDir: File): PulseAudioComponent {

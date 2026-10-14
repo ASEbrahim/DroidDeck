@@ -171,6 +171,18 @@ def apply_config(env, config, app_id, fixes=None):
     return result
 
 
+def bridge_feature_level(env):
+    """On the Mali bridge, a vkd3d-proton feature level past 12_0 is capped at 12_0. 12_1 and 12_2
+    claim ROVs, conservative rasterization, ray tracing and mesh shaders, which the GPU behind the
+    bridge has none of; the shared default (12_2, chosen for Turnip) made Deep Rock Galactic build
+    ray tracing pipelines on D3D12 and crash. Returns a note when it changed something."""
+    if env.get("BL_VKBRIDGE") != "1" or env.get("VKD3D_FEATURE_LEVEL") not in ("12_1", "12_2"):
+        return None
+    was = env["VKD3D_FEATURE_LEVEL"]
+    env["VKD3D_FEATURE_LEVEL"] = "12_0"
+    return "Mali bridge: VKD3D_FEATURE_LEVEL %s capped at 12_0 (no ray tracing or mesh shaders)" % was
+
+
 def sync_config(config, app_id):
     games = config.get("games", {})
     return {
@@ -331,6 +343,9 @@ def main():
             print("droiddeck-game-env: invalid configuration; using inherited environment", file=sys.stderr)
     if mic_enabled == "0":
         env["BANNER_AUDIO_DIRECT_MIC"] = "0"
+    note = bridge_feature_level(env)
+    if note:
+        print("droiddeck-game-env: " + note, file=sys.stderr)
     env = force_ssbs(command, env)
     command, env = start_without_steam(command, env, app_id)
     sync = load_sync()
