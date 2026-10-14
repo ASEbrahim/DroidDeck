@@ -692,6 +692,12 @@ BUSCONF
       fi
       [ "${BL_VKBRIDGE_CEF_LOG:-0}" = 1 ] && _bl_cef+=(-cef-enable-logging=stderr -cef-v=1)
       [ -n "${BL_VKBRIDGE_CEF_EXTRA:-}" ] && read -r -a _bl_cef_extra <<<"$BL_VKBRIDGE_CEF_EXTRA" && _bl_cef+=("${_bl_cef_extra[@]}")
+      # The web helper keeps its own GPU process on the bridge. With its GPU work inside the
+      # browser process (the preload's --in-process-gpu default) the browser stops answering,
+      # Steam restarts it every 10 s and then quits before the login page.
+      # BL_VKBRIDGE_WEBHELPER_ARGS takes the preload's BL_WEBHELPER_ARGS syntax for experiments.
+      export BL_WEBHELPER_ARGS="${BL_VKBRIDGE_WEBHELPER_ARGS:-stock}"
+      echo "== steam: web helper process layout: $BL_WEBHELPER_ARGS (Mali bridge)"
     fi
     if [ "${BL_STEAM_UI:-}" != desktop ]; then
       _bl_ui+=(-steamdeck -steamos3)
