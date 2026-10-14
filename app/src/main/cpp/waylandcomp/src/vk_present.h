@@ -1,6 +1,7 @@
 #ifndef VK_PRESENT_H
 #define VK_PRESENT_H
 #include <stdint.h>
+#include <stddef.h>
 #include <android/native_window.h>
 void vk_present_set_driver(const char *driver_path, const char *library_name,
                            const char *native_lib_dir);
@@ -29,6 +30,14 @@ struct vkp_image *vkp_image_import_dmabuf(int fd, uint32_t drm_format, uint64_t 
                                           int w, int h, uint32_t stride, uint32_t offset,
                                           int as_blit_dst);
 int vkp_image_is_dmabuf(const struct vkp_image *img);
+// Layer mode, drivers other than Qualcomm's: import a gralloc pool buffer as an AHardwareBuffer
+// (VK_ANDROID_external_memory_android_hardware_buffer) as a blit target, so the driver takes the
+// layout from gralloc instead of from a dma-buf fd / pitch / modifier read out of its handle. NULL on
+// failure (logged with the VkResult). On success `info` (may be NULL) gets the VkFormat, size and
+// memory types used, for the pool's log line. vkp_can_import_ahb(): the device has the extension.
+struct AHardwareBuffer;
+int vkp_can_import_ahb(void);
+struct vkp_image *vkp_image_import_ahb(struct AHardwareBuffer *ahb, char *info, size_t info_n);
 
 struct vkp_image *vkp_image_create_shm(int w, int h);
 void vkp_image_upload_shm(struct vkp_image *img, const void *data, int stride);
