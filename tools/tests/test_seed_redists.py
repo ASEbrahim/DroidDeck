@@ -81,6 +81,15 @@ class SeedRedistsTest(unittest.TestCase):
         self.run_seed(str(sd))
         self.assertIn('"VCRedist2022"=dword:00000001', self.reg.read_text())
 
+    def test_without_the_shared_redistributables_the_known_list_covers_vc_2005(self):
+        # Just Cause 2 wants VC++ 2005, and the Common Redistributables may land in the launch's minute.
+        self.run_seed()
+        reg = self.reg.read_text()
+        self.assertIn("[Software\\\\Valve\\\\Steam\\\\Apps\\\\CommonRedist\\\\vcredist\\\\2005]", reg)
+        self.assertIn('"x86"=dword:00000001', reg)
+        self.assertIn('"x64"=dword:00000001', reg)
+        self.assertIn("[Software\\\\Valve\\\\Steam\\\\Apps\\\\CommonRedist\\\\vcredist\\\\2008]", reg)
+
     def test_the_vc_runtime_is_recorded_for_every_architecture_and_view(self):
         self.run_seed()
         reg = self.reg.read_text()

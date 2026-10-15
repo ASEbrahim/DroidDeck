@@ -578,6 +578,17 @@ class AppInfoTest(unittest.TestCase):
         self.assertEqual(changes, {})
         self.assertEqual(auto, {})
 
+    def test_dual_platform_titles_get_the_default_unless_a_native_choice_is_shown(self):
+        tool, native = self.COMPAT["TOOL"], self.COMPAT["NATIVE_CHOICE"]
+        targets = {"30": native, "31": native, "32": native, "33": native}
+        # 30: fresh install, empty live answer. 31: ours, gone while installed (cleared by the owner).
+        # 32: ours, gone while not installed (uninstalled). 33: an entry kept with no tool.
+        changes, auto = self.COMPAT["plan_mapping"](
+            {"0": tool, "30": "", "31": "", "32": "", "33": ""}, ["30", "31", "33"], [tool], tool,
+            {"31": tool, "32": tool}, targets, (), None, ["31", "32"], (), ["33"])
+        self.assertEqual(changes, {"30": tool})
+        self.assertEqual(auto, {"30": tool, "31": native, "33": native})
+
     def test_the_tool_files(self):
         with tempfile.TemporaryDirectory() as tmp:
             tool = Path(tmp) / "droiddeck-fex"

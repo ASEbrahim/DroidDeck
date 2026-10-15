@@ -288,20 +288,77 @@ def start_without_steam(command, env, app_id):
 EVALUATOR_SCRIPT = re.compile(r"(?:^|[\\/])evaluatorscript_[0-9]+\.vdf$", re.IGNORECASE)
 
 
+INSTALL_SCRIPT = re.compile(r"^installscript.*\.vdf$", re.IGNORECASE)
+LIBRARY_PATH = re.compile(r'"path"\s+"((?:[^"\\]|\\.)*)"')
+GAME_LIBRARIES = ("/mnt/droiddeck", "/mnt/droiddeck-sd")
+
+
+def runs(command, program):
+    return any(arg.lower().replace("\\", "/").endswith(program) for arg in command)
+
+
+def game_folder(root, env):
+    """The installed game's folder, for a client helper Proton is given no install path for."""
+    given = env.get("STEAM_COMPAT_INSTALL_PATH", "")
+    if given and os.path.isdir(given):
+        return given
+    app = game_id(env)
+    if not app:
+        return None
+    libraries = [root] + list(GAME_LIBRARIES)
+    try:
+        with open(os.path.join(root, "steamapps", "libraryfolders.vdf"), encoding="utf-8", errors="replace") as f:
+            libraries += [path.replace("\\\\", "\\") for path in LIBRARY_PATH.findall(f.read())]
+    except OSError:
+        pass
+    for library in dict.fromkeys(libraries):
+        try:
+            with open(os.path.join(library, "steamapps", "appmanifest_%s.acf" % app), encoding="utf-8", errors="replace") as f:
+                found = re.search(r'"installdir"\s+"([^"]+)"', f.read(), re.IGNORECASE)
+        except OSError:
+            continue
+        if found:
+            folder = os.path.join(library, "steamapps", "common", found.group(1))
+            if os.path.isdir(folder):
+                return folder
+    return None
+
+
+def game_install_scripts(folder, depth=4):
+    found = []
+    base = folder.rstrip("/").count("/")
+    for directory, dirs, files in os.walk(folder):
+        if directory.count("/") - base >= depth:
+            dirs[:] = []
+        found += [os.path.join(directory, name) for name in files if INSTALL_SCRIPT.match(name)]
+    return sorted(found)
+
+
 def mark_install_scripts(command, env):
-    """The client is about to run a game's install scripts (iscriptevaluator.exe): mark every process
-    in them but a Vulkan runtime installer as already run first, so no redistributable installer
-    starts - on first launch the shared ones may still be downloading, and on ARM64 Proton the VC++
-    ones stop with an error."""
-    if not any(arg.lower().replace("\\", "/").endswith("iscriptevaluator.exe") for arg in command):
-        return
+    """The client is about to run a game's install scripts: mark every process in them but a Vulkan
+    runtime installer as already run first, so no redistributable installer starts - on first
+    launch the shared ones may still be downloading, and on ARM64 Proton the VC++ ones stop with an
+    error. Two client helpers run them: iscriptevaluator.exe, given the script, and the service
+    helper (legacycompat steamservice.exe /runfunc, Just Cause 2), given none - its scripts are the
+    game's own installscript*.vdf."""
     root = env.get("STEAM_COMPAT_CLIENT_INSTALL_PATH") or str(Path.home() / ".local/share/Steam")
-    scripts = [str(Path(root) / arg.replace("\\", "/")) for arg in command if EVALUATOR_SCRIPT.search(arg)]
-    scripts = [path for path in scripts if os.path.isfile(path)]
+    if runs(command, "iscriptevaluator.exe"):
+        scripts = [str(Path(root) / arg.replace("\\", "/")) for arg in command if EVALUATOR_SCRIPT.search(arg)]
+    elif runs(command, "steamservice.exe") and any(arg.lower() == "/runfunc" for arg in command):
+        folder = game_folder(root, env)
+        scripts = game_install_scripts(folder) if folder else []
+        print("droiddeck-game-env: the client's service helper runs install steps for app %s; %d install script(s) to mark" % (
+            game_id(env) or "?", len(scripts)), file=sys.stderr)
+        if not scripts:
+            # Still worth a pass: the shared redistributables may have landed since the last beat.
+            scripts = [""]
+    else:
+        return
+    scripts = [path for path in scripts if not path or os.path.isfile(path)]
     if not scripts:
         return
     try:
-        subprocess.run([SEED_REDISTS, root], env=dict(env, DROIDDECK_SEED_SCRIPTS="\n".join(scripts)),
+        subprocess.run([SEED_REDISTS, root], env=dict(env, DROIDDECK_SEED_SCRIPTS="\n".join(p for p in scripts if p)),
                        stdout=sys.stderr, timeout=60, check=False)
     except (OSError, subprocess.SubprocessError) as error:
         print("droiddeck-game-env: install scripts not marked (%s)" % error, file=sys.stderr)

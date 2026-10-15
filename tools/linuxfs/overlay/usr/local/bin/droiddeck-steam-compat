@@ -440,13 +440,20 @@ class Helper:
             waiting = newer and wanted is not None and wanted not in self.known
             default, state = COMPAT["choose_default"](top["selected"], state, request, live, apply_request=not waiting)
             installed = COMPAT["installed_apps"](self.steam_root)
+            # Titles the client uninstalled while this helper watched it: a native choice belongs to
+            # that install, so a reinstall starts from the default again. (A title missing at attach,
+            # say on a card that is not in, is not known to be uninstalled and keeps its choice.)
+            uninstalled = set(self.installed) - set(installed) if self.installed is not None else set()
             self.installed = installed
             picks = COMPAT["valve_picks"](self.steam_root)
             prior_auto = state.get("auto", {})
             if not isinstance(prior_auto, dict):
                 prior_auto = {}
             prior_native = state.get("native", ())
-            native_choices = set(prior_native if isinstance(prior_native, (list, tuple, set)) else ())
+            native_choices = set(prior_native if isinstance(prior_native, (list, tuple, set)) else ()) - uninstalled
+            set_at = state.get("set_at", {})
+            if not isinstance(set_at, dict):
+                set_at = {}
             apps = sorted(set(installed) | set(picks) | set(prior_auto) | native_choices, key=COMPAT["app_order"])
             overrides = COMPAT["requested_games"](
                 COMPAT["game_requests"](), catalog, [t["name"] for t in live])
@@ -454,28 +461,44 @@ class Helper:
             current = dict(page.compat("many(%s)" % json.dumps(apps)) or {})
             current["0"] = top["selected"]
             native = COMPAT["native_targets"](self.steam_root, apps)
-            raw_mapping = COMPAT["read_config_mapping"](
-                os.path.join(self.steam_root, "config", "config.vdf"))
+            config = os.path.join(self.steam_root, "config", "config.vdf")
+            raw_mapping = COMPAT["read_config_mapping"](config)
+            try:
+                flushed = os.stat(config).st_mtime
+            except OSError:
+                flushed = 0
+            cleared = set()
             if raw_mapping is None:
                 for app in native_choices:
                     current[app] = ""
             else:
+                cleared = {app for app, name in raw_mapping.items() if app != "0" and not name}
                 for app in set(native) | native_choices:
                     if app in raw_mapping:
                         current[app] = raw_mapping[app]
+                    elif (app in prior_auto and app not in native_choices and current.get(app) == prior_auto[app]
+                          and flushed <= float(set_at.get(app, 0) or 0)):
+                        # Set by this helper and the client has not written config.vdf since:
+                        # the entry is missing because it is not saved yet, not because it was cleared.
+                        pass
                     elif app in prior_auto or app in native_choices:
                         current[app] = ""
             changes, auto = COMPAT["plan_mapping"](
                 current, installed, [t["name"] for t in live], default,
                 COMPAT["followers"](state, current), native, picks, overrides,
-                prior_auto.keys(), native_choices)
+                set(prior_auto) - uninstalled, native_choices, cleared)
+            now = time.time()
             for app, tool in sorted(changes.items(), key=lambda item: COMPAT["app_order"](item[0])):
                 page.compat("set(%d, %s)" % (int(app), json.dumps(tool if tool is not None else "")))
                 say("%s -> %s" % ("default" if app == "0" else "app %s" % app,
                                    tool if tool is not None else "Steam native default"))
+                if tool is not None:
+                    set_at[app] = now
+            auto_now = {app: tool for app, tool in auto.items() if tool is not COMPAT["NATIVE_CHOICE"]}
             state.update(
-                auto={app: tool for app, tool in auto.items() if tool is not COMPAT["NATIVE_CHOICE"]},
+                auto=auto_now,
                 native=sorted(app for app, tool in auto.items() if tool is COMPAT["NATIVE_CHOICE"]),
+                set_at={app: at for app, at in set_at.items() if app in auto_now},
                 tools=catalog, live=True)
             if waiting:
                 state["pending"] = wanted
@@ -542,8 +565,11 @@ def main():
         say("no devtools port for this session; the client's mapping is kept through config.vdf")
         return 0
     os.makedirs(COMPAT["COMPAT_DIR"], exist_ok=True)
+    # Every library's steamapps: a new appmanifest_ is how an install shows, and the title has to be
+    # mapped while the client picks its depots, before the first launch.
     watcher = Watcher([COMPAT["state_path"]("request.json"), COMPAT["state_path"]("games.json")] +
-                      [os.path.join(lib, "steamapps", "libraryfolders.vdf") for lib in (steam_root, COMPAT["LIBRARY"] + "-sd")])
+                      [os.path.join(lib, "steamapps", "libraryfolders.vdf") for lib in
+                       dict.fromkeys([steam_root, COMPAT["LIBRARY"] + "-sd"] + COMPAT["libraries"](steam_root))])
     steamos = os.environ.get("BL_STEAMDECK") == "1" and os.environ.get("BL_STEAM_UI") != "desktop"
     helper = Helper(steam_root, port, steamos)
     failures = 0

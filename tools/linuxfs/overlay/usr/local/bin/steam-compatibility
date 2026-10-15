@@ -880,7 +880,17 @@ NATIVE_CHOICE = object()
 
 
 def plan_mapping(current, installed, runnable, default, auto, native=None, picks=(), overrides=None, managed=None,
-                 native_choices=()):
+                 native_choices=(), cleared=None):
+    """What to change in CompatToolMapping, and the titles that follow DroidDeck's default.
+
+    A title with a Windows build and an x86-only Linux build (NATIVE_CHOICE in `native`) gets the
+    default Proton: left unmapped, the arm64 client runs its Linux build through the client's own
+    FEX launch, whose FEXServer does not come up here (McOsu). Such a title stays unmapped only on
+    evidence that the owner cleared it: a saved native choice, an entry the client keeps with no
+    tool (`cleared`; read from `current` when not given, as config.vdf holds only real entries),
+    or a mapping of ours that is gone while the title is still installed. An empty live answer is
+    no evidence, as a freshly installed title that was never mapped gets one too; nor is a mapping
+    that went with an uninstall."""
     runnable = {n.lower() for n in runnable}
     installed = set(installed)
     picks = set(picks)
@@ -888,6 +898,7 @@ def plan_mapping(current, installed, runnable, default, auto, native=None, picks
     overrides = overrides or {}
     managed = set(auto) if managed is None else set(managed)
     native_choices = set(native_choices)
+    cleared = {app for app, name in current.items() if not name} if cleared is None else set(cleared)
     changes, kept = {}, {}
     if current.get("0", "") != default:
         changes["0"] = default
@@ -911,7 +922,7 @@ def plan_mapping(current, installed, runnable, default, auto, native=None, picks
         if name and not stale and (mine is None or name != mine):
             continue
         if target is NATIVE_CHOICE:
-            if not name and (app in native_choices or app in current or app in managed):
+            if not name and (app in native_choices or app in cleared or (app in managed and app in installed)):
                 kept[app] = NATIVE_CHOICE
                 continue
             target = default
