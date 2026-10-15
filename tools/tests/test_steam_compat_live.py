@@ -402,6 +402,108 @@ class ReconcileTest(unittest.TestCase):
         finally:
             COMPAT["native_targets"] = original_native_targets
 
+    def dual_platform(self, app):
+        """`app` has a Windows build and an x86-only Linux build (McOsu); config.vdf maps only "0"."""
+        config = self.steam / "config/config.vdf"
+        config.parent.mkdir(parents=True, exist_ok=True)
+        config.write_text(
+            '"InstallConfigStore" { "Software" { "Valve" { "Steam" { '
+            '"CompatToolMapping" { "0" { "name" "%s" } } } } } }' % TOOL)
+        os.utime(config, (1000, 1000))
+        original_native_targets = COMPAT["native_targets"]
+        COMPAT["native_targets"] = lambda _root, apps: {
+            app: COMPAT["NATIVE_CHOICE"]
+        } if app in apps else {}
+        self.addCleanup(COMPAT.__setitem__, "native_targets", original_native_targets)
+        return config
+
+    def test_a_fresh_dual_platform_install_with_an_empty_live_answer_gets_the_default_proton(self):
+        # McOsu (607260): the client answers "" for an unmapped title; left so, it runs the x86
+        # Linux build through its own FEX launch, which fails here.
+        app = "607260"
+        config = self.dual_platform(app)
+        (self.state / "state.json").write_text(json.dumps({"default": TOOL, "auto": {}}))
+        page = FakePage({"0": TOOL, "10": TOOL, "11": TOOL}, [TOOL, TOOL_11])
+        state = self.reconcile(page)
+        self.assertEqual(page.sets, [])
+        self.assertEqual(state["native"], [])
+
+        (self.steam / ("steamapps/appmanifest_%s.acf" % app)).write_text("")
+        state = self.reconcile(page)
+        self.assertEqual(page.sets, [(app, TOOL)])
+        self.assertEqual(state["auto"][app], TOOL)
+        self.assertEqual(state["native"], [])
+        self.assertIn(app, state["set_at"])
+
+        # The install keeps writing its manifest; config.vdf is not saved yet. Not a cleared mapping.
+        page.sets.clear()
+        state = self.reconcile(page)
+        self.assertEqual(page.sets, [])
+        self.assertEqual(state["auto"][app], TOOL)
+        self.assertEqual(state["native"], [])
+
+        # The client saves config.vdf without the title: the owner unticked the forced tool.
+        config.write_text(config.read_text())
+        os.utime(config, (state["set_at"][app] + 5,) * 2)
+        page.mapping[app] = ""
+        state = self.reconcile(page)
+        self.assertEqual(page.sets, [])
+        self.assertEqual(state["native"], [app])
+        self.assertNotIn(app, state["auto"])
+        self.assertNotIn(app, state["set_at"])
+
+    def test_a_native_choice_ends_with_an_uninstall_seen_live(self):
+        app = "607260"
+        self.dual_platform(app)
+        manifest = self.steam / ("steamapps/appmanifest_%s.acf" % app)
+        manifest.write_text("")
+        (self.state / "state.json").write_text(json.dumps({"default": TOOL, "auto": {}, "native": [app]}))
+        page = FakePage({"0": TOOL, "10": TOOL, "11": TOOL}, [TOOL, TOOL_11])
+        state = self.reconcile(page)
+        self.assertEqual(page.sets, [])
+        self.assertEqual(state["native"], [app])
+
+        manifest.unlink()
+        state = self.reconcile(page)
+        self.assertEqual(state["native"], [])
+        self.assertNotIn(app, state["auto"])
+
+        manifest.write_text("")
+        state = self.reconcile(page)
+        self.assertEqual(page.sets, [(app, TOOL)])
+        self.assertEqual(state["auto"][app], TOOL)
+
+    def test_an_uninstall_that_drops_our_mapping_is_not_read_as_a_native_choice(self):
+        app = "607260"
+        self.dual_platform(app)
+        manifest = self.steam / ("steamapps/appmanifest_%s.acf" % app)
+        manifest.write_text("")
+        (self.state / "state.json").write_text(json.dumps({"default": TOOL, "auto": {app: TOOL}}))
+        page = FakePage({"0": TOOL, "10": TOOL, "11": TOOL, app: TOOL}, [TOOL, TOOL_11])
+        self.reconcile(page)
+        manifest.unlink()
+        page.mapping[app] = ""
+        state = self.reconcile(page)
+        self.assertEqual(state["native"], [])
+        self.assertNotIn(app, state["auto"])
+        manifest.write_text("")
+        state = self.reconcile(page)
+        self.assertEqual(page.sets, [(app, TOOL)])
+        self.assertEqual(state["native"], [])
+
+    def test_an_entry_the_client_keeps_with_no_tool_is_a_native_choice(self):
+        app = "607260"
+        config = self.dual_platform(app)
+        config.write_text(
+            '"InstallConfigStore" { "Software" { "Valve" { "Steam" { '
+            '"CompatToolMapping" { "0" { "name" "%s" } "%s" { "name" "" } } } } } }' % (TOOL, app))
+        (self.steam / ("steamapps/appmanifest_%s.acf" % app)).write_text("")
+        (self.state / "state.json").write_text(json.dumps({"default": TOOL, "auto": {}}))
+        page = FakePage({"0": TOOL, "10": TOOL, "11": TOOL}, [TOOL, TOOL_11])
+        state = self.reconcile(page)
+        self.assertEqual(page.sets, [])
+        self.assertEqual(state["native"], [app])
+
     def test_missing_per_game_proton_stays_deferred_live(self):
         page = FakePage({"0": TOOL, "10": "GE-Proton9-1", "11": TOOL_11}, [TOOL, TOOL_11])
         (self.state / "games.json").write_text(json.dumps({
