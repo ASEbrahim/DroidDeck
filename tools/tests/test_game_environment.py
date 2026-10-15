@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 BIN = Path(__file__).resolve().parents[1] / "linuxfs/overlay/usr/local/bin"
 MODULE = runpy.run_path(str(BIN / "droiddeck-game-env"))
@@ -82,6 +83,40 @@ class GameEnvironmentTest(unittest.TestCase):
             self.assertEqual(len(calls), 1)
             self.assertEqual(calls[0][0][1], str(root))
             self.assertEqual(calls[0][1]["DROIDDECK_SEED_SCRIPTS"], str(script))
+
+    def test_the_service_helper_gets_the_games_install_scripts_marked_first(self):
+        # Just Cause 2: legacycompat\\steamservice.exe /runfunc runs the install steps with no script
+        # on its command line and no install path for Proton.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "Steam"
+            sd = Path(tmp) / "sd"
+            game = sd / "steamapps/common/Just Cause 2"
+            (game / "_CommonRedist/vcredist/2005").mkdir(parents=True)
+            (game / "installscript.vdf").write_text("{}")
+            (game / "_CommonRedist/vcredist/2005/installscript.vdf").write_text("{}")
+            (root / "steamapps").mkdir(parents=True)
+            (root / "steamapps/libraryfolders.vdf").write_text('"libraryfolders" { "1" { "path" "%s" } }' % sd)
+            (sd / "steamapps/appmanifest_8190.acf").write_text('"AppState" { "appid" "8190" "installdir" "Just Cause 2" }')
+            calls = []
+            module = MODULE["mark_install_scripts"].__globals__
+            run = module["subprocess"].run
+            module["subprocess"].run = lambda args, **kw: calls.append((args, kw["env"]))
+            try:
+                helper = ["/proton", "run", "Z:\\root\\.local\\share\\Steam\\legacycompat\\steamservice.exe",
+                          "/runfunc", "2528692275", "1", "6959", "32768"]
+                env = {"STEAM_COMPAT_CLIENT_INSTALL_PATH": str(root), "STEAM_COMPAT_INSTALL_PATH": "",
+                       "STEAM_COMPAT_DATA_PATH": str(sd / "steamapps/compatdata/8190")}
+                with mock.patch("sys.stderr"):
+                    MODULE["mark_install_scripts"](helper, env)
+                    MODULE["mark_install_scripts"](helper[:3], env)
+                    MODULE["mark_install_scripts"](helper, dict(env, STEAM_COMPAT_DATA_PATH=str(sd / "steamapps/compatdata/9")))
+            finally:
+                module["subprocess"].run = run
+            self.assertEqual(len(calls), 2)
+            self.assertEqual(calls[0][0][1], str(root))
+            self.assertEqual(calls[0][1]["DROIDDECK_SEED_SCRIPTS"].split("\n"), [
+                str(game / "_CommonRedist/vcredist/2005/installscript.vdf"), str(game / "installscript.vdf")])
+            self.assertEqual(calls[1][1]["DROIDDECK_SEED_SCRIPTS"], "")
 
     def test_the_mali_bridge_caps_the_vkd3d_feature_level(self):
         bridge = {"BL_VKBRIDGE": "1", "VKD3D_FEATURE_LEVEL": "12_2"}

@@ -30,6 +30,8 @@ pairs=$(find "$redist" -name installscript.vdf -print0 2>/dev/null | sort -z | r
 [ -n "$pairs" ] || pairs=$(sed 's/^\([^ ]*\) /HKEY_LOCAL_MACHINE\\\\Software\\\\Valve\\\\Steam\\\\Apps\\\\CommonRedist\\\\\1\t/' <<'KNOWN'
 DirectX\\Jun2010 dxsetup
 .NET\\4.8 4.8
+vcredist\\2005 x86
+vcredist\\2005 x64
 vcredist\\2008 x86 SP1
 vcredist\\2008 x64 SP1
 vcredist\\2010 x86
