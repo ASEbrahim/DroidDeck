@@ -1,5 +1,6 @@
 package com.droiddeck.launcher.gpu
 
+import android.content.Context
 import android.os.Process
 import android.util.Log
 import com.droiddeck.launcher.core.HostProcess
@@ -33,7 +34,7 @@ class VkBridgeComponent(private val socket: File, private val logFile: File) : S
         }
         socket.parentFile?.mkdirs()
         // Pipeline cache kept across sessions (Mali recompiles everything in a new process otherwise).
-        val cacheDir = File(app().cacheDir, "vkbridge-pipelines").apply { mkdirs() }
+        val cacheDir = cacheDir(app())
         // A separate process by default: a crash in the GPU driver (seen once inside Mali's
         // vkBeginCommandBuffer) then ends the session, not the app. In-process gave the same driver
         // and the same 119 extensions on the Tab S10+; it remains the fallback.
@@ -74,6 +75,40 @@ class VkBridgeComponent(private val socket: File, private val logFile: File) : S
 
     companion object {
         private const val TAG = "VkBridge"
+        private const val CACHE_DIR = "vkbridge-pipelines"
+
+        /**
+         * The server's own directory (--cache-dir): pipeline caches, the startup probe's device
+         * profile, stuck-pipelines and stuck-spirv/, and the env file of test switches. In the
+         * app's files, which Android never trims: it empties the app's cacheDir when storage runs
+         * low, and once took all of this from under a running server. Nothing trims it here; the
+         * server bounds what it keeps (64 MB per pipeline cache file, and in newer servers a total
+         * limit, VKBRIDGE_PCACHE_TOTAL_MB). A directory left in cacheDir by an older build is moved
+         * over once.
+         */
+        fun cacheDir(context: Context): File {
+            val dir = File(context.filesDir, CACHE_DIR)
+            val old = File(context.cacheDir, CACHE_DIR)
+            if (old.isDirectory) migrate(old, dir)
+            dir.mkdirs()
+            return dir
+        }
+
+        /** Moves old's contents into dir (what dir already has wins), then removes old. */
+        private fun migrate(old: File, dir: File) {
+            val moved = if (!dir.exists()) old.renameTo(dir) else false
+            if (!moved) {
+                dir.mkdirs()
+                old.listFiles()?.forEach { f ->
+                    val to = File(dir, f.name)
+                    if (to.exists()) return@forEach
+                    if (!f.renameTo(to)) runCatching { f.copyRecursively(to, overwrite = false) }
+                }
+                old.deleteRecursively()
+            }
+            Log.i(TAG, "bridge cache moved from $old to $dir")
+        }
+
         /** The server, named as a library so Android extracts it and lets the app run it. */
         const val BINARY = "libvkbridge_server.so"
         /** Inside the runtime (staged by SessionFiles). */
