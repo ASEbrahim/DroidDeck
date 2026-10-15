@@ -209,7 +209,7 @@ internal fun SetupPanel(
                                     else -> if (s.vkBridge) stringResource(R.string.setup_gpu_bridge_detail, gpuName)
                                     else stringResource(R.string.setup_gpu_unsupported_detail, gpuName)
                                 },
-                                divider = divider,
+                                divider = divider || (!s.adreno && s.vkBridge),
                                 // Not an Adreno: the experimental Vulkan bridge is the one way to draw.
                                 action = if (s.adreno) null else { {
                                     SecondaryButton(
@@ -217,6 +217,20 @@ internal fun SetupPanel(
                                         enabled = !s.sessionRunning, compact = true, onClick = { a.onVkBridge(!s.vkBridge) },
                                     )
                                 } },
+                            )
+                            // The bridge's mode (MaliBridge server_mode.c): safe keeps its workarounds
+                            // wherever the startup probe has not verified this GPU; off is faster.
+                            if (!s.adreno && s.vkBridge) CheckRow(
+                                CheckState.OK,
+                                stringResource(R.string.setup_bridge_safe),
+                                stringResource(if (s.vkBridgeSafe) R.string.setup_bridge_safe_on_detail else R.string.setup_bridge_safe_off_detail),
+                                divider = divider,
+                                action = {
+                                    SecondaryButton(
+                                        stringResource(if (s.vkBridgeSafe) R.string.setup_bridge_safe_on else R.string.setup_bridge_safe_off),
+                                        enabled = !s.sessionRunning, compact = true, onClick = { a.onVkBridgeSafe(!s.vkBridgeSafe) },
+                                    )
+                                },
                             )
                         }
                         val runtimeCheck: @Composable (Boolean) -> Unit = { divider ->

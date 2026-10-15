@@ -35,6 +35,9 @@ class VkBridgeComponent(private val socket: File, private val logFile: File) : S
         socket.parentFile?.mkdirs()
         // Pipeline cache kept across sessions (Mali recompiles everything in a new process otherwise).
         val cacheDir = cacheDir(app())
+        // Setup's "Safe mode", for a new server and for the in-app one that is reused (it reads
+        // the file again at each client): the JNI call stays as it is.
+        writeMode(cacheDir, com.droiddeck.launcher.session.SessionPrefs.vkBridgeMode(app()))
         // A separate process by default: a crash in the GPU driver (seen once inside Mali's
         // vkBeginCommandBuffer) then ends the session, not the app. In-process gave the same driver
         // and the same 119 extensions on the Tab S10+; it remains the fallback.
@@ -76,6 +79,7 @@ class VkBridgeComponent(private val socket: File, private val logFile: File) : S
     companion object {
         private const val TAG = "VkBridge"
         private const val CACHE_DIR = "vkbridge-pipelines"
+        private const val MODE_FILE = "mode"
 
         /**
          * The server's own directory (--cache-dir): pipeline caches, the startup probe's device
@@ -92,6 +96,22 @@ class VkBridgeComponent(private val socket: File, private val logFile: File) : S
             if (old.isDirectory) migrate(old, dir)
             dir.mkdirs()
             return dir
+        }
+
+        /**
+         * <cache dir>/mode: "safe" or "performance", one word, written atomically (the server may
+         * read it at any moment). VKBRIDGE_MODE in <cache dir>/env or the server's environment
+         * wins over it (developer overrides).
+         */
+        fun writeMode(dir: File, mode: String) {
+            val file = File(dir, MODE_FILE)
+            if (runCatching { file.readText().trim() }.getOrNull() == mode) return
+            val tmp = File(dir, "$MODE_FILE.tmp")
+            runCatching {
+                tmp.writeText(mode + "\n")
+                if (!tmp.renameTo(file)) error("rename failed")
+                Log.i(TAG, "bridge mode: $mode")
+            }.onFailure { Log.w(TAG, "could not write $file: $it"); tmp.delete() }
         }
 
         /** Moves old's contents into dir (what dir already has wins), then removes old. */

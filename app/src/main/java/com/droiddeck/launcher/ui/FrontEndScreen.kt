@@ -132,6 +132,8 @@ class FrontEndState(
     val adreno: Boolean = true,
     /** Setup's "Mali bridge (experimental)" (SessionPrefs.vkBridge). */
     val vkBridge: Boolean = false,
+    /** Setup's "Safe mode" for the Mali bridge (SessionPrefs.vkBridgeSafe), on by default. */
+    val vkBridgeSafe: Boolean = true,
     val showPhantomGate: Boolean = false,
     val orientation: Int = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE,
     val launcherFullscreen: Boolean = true,
@@ -175,6 +177,7 @@ class FrontEndActions(
     val onRemovePackage: (String) -> Unit,
     val onRuntime: () -> Unit,
     val onVkBridge: (Boolean) -> Unit = {},
+    val onVkBridgeSafe: (Boolean) -> Unit = {},
     val onFrameGenPick: (FrameGen.Mode) -> Unit,
     val onImportLossless: () -> Unit,
     val onProtons: () -> Unit,
