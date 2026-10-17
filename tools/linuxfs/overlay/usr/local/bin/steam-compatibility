@@ -781,6 +781,19 @@ def valve_picks(steam_root):
     return sorted(picks, key=int)
 
 
+def valve_tools(steam_root, apps):
+    """App id -> the tool the client itself starts an unmapped title with: Steam Play's mapping for
+    it, else its Steam Deck recommendation ("proton-stable", "native"...). Titles with neither are left out."""
+    entries = appinfo_entries(os.path.join(steam_root, "appcache", "appinfo.vdf"))
+    mapped = entries.get(str(STEAM_PLAY_MANIFESTS), {}).get("app_mappings", {})
+    tools = {}
+    for app in {str(app) for app in apps}:
+        tool = mapped.get(app) or entries.get(app, {}).get("recommended", "")
+        if tool:
+            tools[app] = tool
+    return tools
+
+
 def native_targets(steam_root, apps):
     wanted = {str(app) for app in apps if str(app) not in NOT_GAMES}
     if not wanted:
@@ -902,7 +915,7 @@ NATIVE_CHOICE = object()
 
 
 def plan_mapping(current, installed, runnable, default, auto, native=None, picks=(), overrides=None, managed=None,
-                 native_choices=(), cleared=None):
+                 native_choices=(), cleared=None, valve=None):
     """What to change in CompatToolMapping, and the titles that follow DroidDeck's default.
 
     A title with a Windows build and an x86-only Linux build (NATIVE_CHOICE in `native`) gets the
@@ -912,7 +925,9 @@ def plan_mapping(current, installed, runnable, default, auto, native=None, picks
     tool (`cleared`; read from `current` when not given, as config.vdf holds only real entries),
     or a mapping of ours that is gone while the title is still installed. An empty live answer is
     no evidence, as a freshly installed title that was never mapped gets one too; nor is a mapping
-    that went with an uninstall.
+    that went with an uninstall. Nor does a native choice hold for a title the client itself starts
+    with a Valve Proton when unmapped (`valve`, see valve_tools): unmapped, it would get that Proton,
+    not its Linux build (Undertale with "proton-stable").
 
     A tool that cannot start here is replaced, keeping what the owner asked for: a Valve ARM64
     Proton becomes DroidDeck's build of it, and a Steam Linux Runtime becomes the title's own Linux
@@ -925,6 +940,7 @@ def plan_mapping(current, installed, runnable, default, auto, native=None, picks
     managed = set(auto) if managed is None else set(managed)
     native_choices = set(native_choices)
     cleared = {app for app, name in current.items() if not name} if cleared is None else set(cleared)
+    valve = valve or {}
     changes, kept = {}, {}
     if current.get("0", "") != default:
         changes["0"] = default
@@ -961,7 +977,8 @@ def plan_mapping(current, installed, runnable, default, auto, native=None, picks
         if name and not stale and (mine is None or name != mine):
             continue
         if target is NATIVE_CHOICE:
-            if not name and (app in native_choices or app in cleared or (app in managed and app in installed)):
+            if (not name and (app in native_choices or app in cleared or (app in managed and app in installed))
+                    and not unrunnable(valve.get(app, ""), runnable)):
                 kept[app] = NATIVE_CHOICE
                 continue
             target = default
@@ -1207,11 +1224,14 @@ def register_default(config_path, apps=(), protect=(), default=None, catalog=Non
                 default = state.get("default") if state.get("default") in names else TOOL
         steam_root = os.path.dirname(os.path.dirname(os.path.abspath(config_path)))
         overrides = requested_games(game_requests(directory), catalog)
+        native_choices = state.get("native", ())
+        if not isinstance(native_choices, (list, tuple)):
+            native_choices = ()
         changes, auto = plan_mapping(
             current, apps, names, default, followers(state, current),
             native_targets(steam_root, set(apps) | set(picks)), picks,
             overrides, state.get("auto", {}).keys() if isinstance(state.get("auto"), dict) else (),
-            state.get("native", ()))
+            native_choices, valve=valve_tools(steam_root, set(apps) | set(picks) | set(native_choices)))
         for app, tool in changes.items():
             set_mapping(tokens, mapping, app, tool)
         text = serialize(tokens)

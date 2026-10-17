@@ -766,6 +766,16 @@ class ProtonDefaultTest(unittest.TestCase):
             state = json.loads((Path(tmp) / "state.json").read_text())
             self.assertEqual(state["auto"], {})
 
+    def test_native_choice_gives_way_where_the_client_would_start_a_valve_proton(self):
+        native = {"10": COMPAT["NATIVE_CHOICE"], "11": COMPAT["NATIVE_CHOICE"], "12": COMPAT["NATIVE_CHOICE"]}
+        changes, auto = COMPAT["plan_mapping"](
+            {"0": self.TOOL}, ["10", "11", "12"], self.NAMES, self.TOOL, {}, native,
+            native_choices=["10", "11", "12"], valve={"10": "proton-stable", "11": "native"})
+        self.assertEqual(changes, {"10": self.TOOL})
+        self.assertIs(auto["11"], COMPAT["NATIVE_CHOICE"])
+        self.assertIs(auto["12"], COMPAT["NATIVE_CHOICE"])
+        self.assertEqual(auto["10"], self.TOOL)
+
     def test_uninstalled_titles_are_forgotten(self):
         changes, auto = self.plan({"0": self.TOOL}, [], self.TOOL, {"10": self.TOOL})
         self.assertEqual((changes, auto), ({}, {}))

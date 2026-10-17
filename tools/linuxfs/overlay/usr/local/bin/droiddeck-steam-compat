@@ -486,7 +486,8 @@ class Helper:
             changes, auto = COMPAT["plan_mapping"](
                 current, installed, [t["name"] for t in live], default,
                 COMPAT["followers"](state, current), native, picks, overrides,
-                set(prior_auto) - uninstalled, native_choices, cleared)
+                set(prior_auto) - uninstalled, native_choices, cleared,
+                COMPAT["valve_tools"](self.steam_root, set(native) | native_choices))
             now = time.time()
             for app, tool in sorted(changes.items(), key=lambda item: COMPAT["app_order"](item[0])):
                 page.compat("set(%d, %s)" % (int(app), json.dumps(tool if tool is not None else "")))

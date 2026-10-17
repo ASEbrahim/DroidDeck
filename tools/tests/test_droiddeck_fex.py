@@ -536,6 +536,8 @@ class AppInfoTest(unittest.TestCase):
                 }, magic))
                 self.COMPAT["APPINFO_CACHE"].clear()
                 self.assertEqual(self.COMPAT["valve_picks"](str(steam)), ["10", "11", "12", "16"], hex(magic))
+                self.assertEqual(self.COMPAT["valve_tools"](str(steam), ["10", "11", "15", "16", "17", "99"]),
+                                 {"10": "proton-stable", "11": "native", "16": "proton-stable"}, hex(magic))
 
     def test_titles_with_a_valve_pick_follow_the_default_until_the_user_picks(self):
         tool = self.COMPAT["TOOL"]

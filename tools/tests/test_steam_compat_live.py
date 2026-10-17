@@ -417,6 +417,30 @@ class ReconcileTest(unittest.TestCase):
         finally:
             COMPAT["native_targets"] = original_native_targets
 
+    def test_a_saved_native_choice_does_not_hold_where_the_client_would_start_valve_proton(self):
+        # Undertale (391540): unmapped, the client starts it with Valve's "proton-stable", which
+        # cannot run here, so a native choice saved for it is not kept.
+        app = "391540"
+        (self.steam / ("steamapps/appmanifest_%s.acf" % app)).write_text("")
+        config = self.dual_platform(app)
+        (self.state / "state.json").write_text(json.dumps({"default": TOOL, "auto": {}, "native": [app]}))
+        original_valve_tools = COMPAT["valve_tools"]
+        COMPAT["valve_tools"] = lambda _root, apps: {app: "proton-stable"} if app in apps else {}
+        self.addCleanup(COMPAT.__setitem__, "valve_tools", original_valve_tools)
+        page = FakePage({"0": TOOL, "10": TOOL, "11": TOOL}, [TOOL, TOOL_11])
+        state = self.reconcile(page)
+        self.assertEqual(page.sets, [(app, TOOL)])
+        self.assertEqual(state["native"], [])
+        self.assertEqual(state["auto"], {app: TOOL})
+
+        COMPAT["valve_tools"] = lambda _root, apps: {app: "native"} if app in apps else {}
+        (self.state / "state.json").write_text(json.dumps({"default": TOOL, "auto": {}, "native": [app]}))
+        page = FakePage({"0": TOOL, "10": TOOL, "11": TOOL}, [TOOL, TOOL_11])
+        state = self.reconcile(page)
+        self.assertEqual(page.sets, [])
+        self.assertEqual(state["native"], [app])
+        self.assertEqual(COMPAT["read_config_mapping"](str(config)), {"0": TOOL})
+
     def dual_platform(self, app):
         """`app` has a Windows build and an x86-only Linux build (McOsu); config.vdf maps only "0"."""
         config = self.steam / "config/config.vdf"
