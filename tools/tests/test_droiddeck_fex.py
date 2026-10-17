@@ -555,15 +555,15 @@ class AppInfoTest(unittest.TestCase):
             {"0": tool, "20": "fex", "21": "steamlinuxruntime_sniper", "22": "GE-Proton11-7"},
             ["20", "21", "22", "23", "24"], [tool, "GE-Proton11-7"], tool, {},
             {"20": fex, "21": fex, "22": fex, "23": fex})
-        self.assertEqual(changes, {"23": fex, "24": tool})
+        self.assertEqual(changes, {"21": fex, "23": fex, "24": tool})
         self.assertEqual(auto, {"23": fex, "24": tool})
 
-    def test_explicit_linux_runtime_and_fex_selections_survive_default_maintenance(self):
+    def test_explicit_fex_selection_survives_and_a_linux_runtime_becomes_the_native_launch(self):
         tool, fex = self.COMPAT["TOOL"], self.COMPAT["FEX_TOOL"]
         changes, auto = self.COMPAT["plan_mapping"](
             {"0": tool, "20": "steamlinuxruntime_arm64", "21": fex},
             ["20", "21"], [tool], tool, {}, {"20": None, "21": fex}, ["20", "21"])
-        self.assertEqual(changes, {})
+        self.assertEqual(changes, {"20": None})
         self.assertEqual(auto, {})
 
     def test_native_arm64_default_stays_unmapped_and_old_auto_proton_is_cleared(self):

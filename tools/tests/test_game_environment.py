@@ -493,8 +493,8 @@ class ProtonDefaultTest(unittest.TestCase):
     def test_new_installs_and_valve_picks_follow_the_default(self):
         changes, auto = self.plan({"0": self.TOOL, "10": "proton_experimental", "11": "proton_11_arm64", "12": "GE-Proton11-7", "13": "steamlinuxruntime"},
                                   ["10", "11", "12", "13", "14"], "GE-Proton11-7", {})
-        self.assertEqual(changes, {"0": "GE-Proton11-7", "10": "GE-Proton11-7", "11": "GE-Proton11-7", "14": "GE-Proton11-7"})
-        self.assertEqual(auto, {"10": "GE-Proton11-7", "11": "GE-Proton11-7", "14": "GE-Proton11-7"})
+        self.assertEqual(changes, {"0": "GE-Proton11-7", "10": "GE-Proton11-7", "11": COMPAT["TOOL_11"], "14": "GE-Proton11-7"})
+        self.assertEqual(auto, {"10": "GE-Proton11-7", "14": "GE-Proton11-7"})
 
     def test_windows_only_titles_still_follow_the_default(self):
         changes, auto = COMPAT["plan_mapping"](
@@ -690,7 +690,7 @@ class ProtonDefaultTest(unittest.TestCase):
         self.assertEqual(changes, {})
         self.assertEqual(auto, {})
 
-    def test_native_arm64_keeps_explicit_runtime_fex_and_proton_profiles(self):
+    def test_native_arm64_keeps_explicit_fex_and_proton_profiles(self):
         fex = COMPAT["FEX_TOOL"]
         current = {
             "0": self.TOOL,
@@ -705,7 +705,7 @@ class ProtonDefaultTest(unittest.TestCase):
             {app: None for app in ("42", "43", "44", "45", "46")},
             overrides={"46": "GE-Proton11-7"},
         )
-        self.assertEqual(changes, {"46": "GE-Proton11-7"})
+        self.assertEqual(changes, {"44": None, "46": "GE-Proton11-7"})
         self.assertEqual(auto, {})
 
     def test_titles_following_the_default_move_with_it_and_picks_stay(self):
@@ -719,6 +719,52 @@ class ProtonDefaultTest(unittest.TestCase):
         changes, auto = self.plan({"0": self.TOOL, "10": "GE-Proton10-1", "11": "droiddeck-proton-12-arm64"}, ["10", "11"], self.TOOL, {"10": "GE-Proton10-1"})
         self.assertEqual(changes, {"10": self.TOOL, "11": self.TOOL})
         self.assertEqual(auto, {"10": self.TOOL, "11": self.TOOL})
+
+    def test_valve_arm64_protons_move_to_droiddeck_builds_and_stay_there(self):
+        current = {"0": "GE-Proton11-7", "10": "proton_11-arm64", "11": "proton-experimental-arm64",
+                   "12": "proton_11_arm64", "13": "proton_experimental_arm64", "14": "proton-stable",
+                   "15": "GE-Proton11-7", "16": COMPAT["TOOL_11"], "17": self.TOOL}
+        changes, auto = self.plan(current, [str(a) for a in range(10, 18)], "GE-Proton11-7", {})
+        self.assertEqual(changes, {"10": COMPAT["TOOL_11"], "11": self.TOOL, "12": COMPAT["TOOL_11"],
+                                   "13": self.TOOL, "14": "GE-Proton11-7"})
+        self.assertEqual(auto, {"14": "GE-Proton11-7"})
+        current.update(changes)
+        changes, auto = self.plan(current, [str(a) for a in range(10, 18)], COMPAT["TOOL_11"], auto)
+        self.assertEqual(changes, {"0": COMPAT["TOOL_11"], "14": COMPAT["TOOL_11"]})
+
+    def test_valve_proton_11_arm64_without_droiddeck_build_falls_back_to_the_default(self):
+        changes, auto = COMPAT["plan_mapping"](
+            {"0": self.TOOL, "10": "proton_11-arm64"}, ["10"], [self.TOOL], self.TOOL, {})
+        self.assertEqual(changes, {"10": self.TOOL})
+        self.assertEqual(auto, {"10": self.TOOL})
+
+    def test_a_linux_runtime_becomes_the_titles_own_linux_launch(self):
+        fex = COMPAT["FEX_TOOL"]
+        native = {"10": None, "11": fex, "12": COMPAT["NATIVE_CHOICE"]}
+        current = {"0": self.TOOL, "10": "steamlinuxruntime_arm64", "11": "steamlinuxruntime_sniper",
+                   "12": "SteamLinuxRuntime", "13": "steamlinuxruntime"}
+        changes, auto = COMPAT["plan_mapping"](current, ["10", "11", "12", "13"], self.NAMES, self.TOOL, {}, native)
+        # 13 has no appinfo to go by: what it needs is unknown, so its pick stays.
+        self.assertEqual(changes, {"10": None, "11": fex, "12": fex})
+        self.assertEqual(auto, {})
+        current.update({"10": "", "11": fex, "12": fex})
+        changes, _ = COMPAT["plan_mapping"](current, ["10", "11", "12", "13"], self.NAMES, self.TOOL, auto, native)
+        self.assertEqual(changes, {})
+
+    def test_config_vdf_maps_a_valve_arm64_proton_to_droiddeck_without_the_live_client(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = Path(tmp) / "config.vdf"
+            config.write_text(config_text([("0", self.TOOL), ("42", "proton_11-arm64"), ("43", "GE-Proton11-7")]))
+            globals_ = COMPAT["register_default"].__globals__
+            original_native_targets = globals_["native_targets"]
+            globals_["native_targets"] = lambda _root, _apps: {}
+            try:
+                COMPAT["register_default"](str(config), ["42", "43"], catalog=self.CATALOG, directory=tmp)
+            finally:
+                globals_["native_targets"] = original_native_targets
+            self.assertEqual(mapping_of(config.read_text()), {"0": self.TOOL, "42": COMPAT["TOOL_11"], "43": "GE-Proton11-7"})
+            state = json.loads((Path(tmp) / "state.json").read_text())
+            self.assertEqual(state["auto"], {})
 
     def test_uninstalled_titles_are_forgotten(self):
         changes, auto = self.plan({"0": self.TOOL}, [], self.TOOL, {"10": self.TOOL})

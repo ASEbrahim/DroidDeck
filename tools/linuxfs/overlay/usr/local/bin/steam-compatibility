@@ -871,6 +871,28 @@ def unrunnable(name, runnable):
     return low not in runnable and (low.startswith("proton") or low == LEGACY_TOOL or low.startswith("droiddeck-proton"))
 
 
+# Valve's own ARM64 Protons and the Steam Linux Runtime start inside pressure-vessel, whose bwrap
+# needs user namespaces the app does not have ("bwrap: Creating new namespace failed"): a title
+# mapped to one dies at once. A hand-picked Valve ARM64 Proton moves to DroidDeck's build of it.
+VALVE_ARM64_EQUIVALENTS = (
+    (re.compile(r"proton[_-]?experimental[_-]arm64"), TOOL),
+    (re.compile(r"proton[_-]?11(?:[._-][0-9]+)*[_-]arm64"), TOOL_11),
+)
+
+
+def valve_arm64_equivalent(name, runnable):
+    """DroidDeck's tool for a Valve ARM64 Proton name, when that tool is there to run."""
+    low = name.lower()
+    for pattern, tool in VALVE_ARM64_EQUIVALENTS:
+        if pattern.fullmatch(low) and tool in runnable:
+            return tool
+    return None
+
+
+def is_linux_runtime(name):
+    return name.lower().startswith("steamlinuxruntime")
+
+
 def app_order(app):
     return (len(app), app)
 
@@ -890,7 +912,11 @@ def plan_mapping(current, installed, runnable, default, auto, native=None, picks
     tool (`cleared`; read from `current` when not given, as config.vdf holds only real entries),
     or a mapping of ours that is gone while the title is still installed. An empty live answer is
     no evidence, as a freshly installed title that was never mapped gets one too; nor is a mapping
-    that went with an uninstall."""
+    that went with an uninstall.
+
+    A tool that cannot start here is replaced, keeping what the owner asked for: a Valve ARM64
+    Proton becomes DroidDeck's build of it, and a Steam Linux Runtime becomes the title's own Linux
+    launch (unmapped for arm64, DroidDeck's FEX tool for x86)."""
     runnable = {n.lower() for n in runnable}
     installed = set(installed)
     picks = set(picks)
@@ -913,6 +939,19 @@ def plan_mapping(current, installed, runnable, default, auto, native=None, picks
                 changes[app] = target
             if overrides[app] is None:
                 kept[app] = target
+            continue
+        equivalent = valve_arm64_equivalent(name, runnable)
+        if equivalent is not None:
+            # The owner's pick, kept as DroidDeck's build of the same Proton; it does not follow the default.
+            changes[app] = equivalent
+            continue
+        if is_linux_runtime(name) and app in native:
+            # The Linux build without the runtime's container: arm64 runs as is, x86 through FEX.
+            # (A title with no known Linux build keeps it: its appinfo cannot say what it needs.)
+            target = native.get(app, default)
+            if target is NATIVE_CHOICE:
+                target = FEX_TOOL
+            changes[app] = target
             continue
         mine = auto.get(app)
         target = native.get(app, default)

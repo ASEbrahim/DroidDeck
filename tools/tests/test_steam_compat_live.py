@@ -252,9 +252,11 @@ class ReconcileTest(unittest.TestCase):
 
             page.sets.clear()
             page.mapping["10"] = "steamlinuxruntime_arm64"
-            self.reconcile(page)
-            self.assertEqual(page.mapping["10"], "steamlinuxruntime_arm64")
-            self.assertEqual(page.sets, [])
+            state = self.reconcile(page)
+            self.assertEqual(page.mapping["10"], "")
+            self.assertEqual(page.sets, [("10", "")])
+            self.assertEqual(state["auto"], {})
+            page.sets.clear()
 
             page.mapping["10"] = TOOL_11
             self.reconcile(page)
@@ -319,7 +321,7 @@ class ReconcileTest(unittest.TestCase):
             self.assertEqual(page.sets, [])
             self.assertEqual(state["native"], [])
 
-            for choice in ("steamlinuxruntime", COMPAT["FEX_TOOL"], TOOL_11):
+            for choice in (COMPAT["FEX_TOOL"], TOOL_11):
                 (self.state / "state.json").write_text(json.dumps({
                     "default": TOOL,
                     "auto": {},
@@ -335,6 +337,19 @@ class ReconcileTest(unittest.TestCase):
                 self.assertEqual(page.mapping[app], choice)
                 self.assertEqual(page.sets, [])
                 self.assertEqual(state["native"], [], choice)
+
+            # A Steam Linux Runtime cannot start here; the x86 Linux build goes through FEX.
+            (self.state / "state.json").write_text(json.dumps({"default": TOOL, "auto": {}, "native": [app]}))
+            config.write_text(
+                '"InstallConfigStore" { "Software" { "Valve" { "Steam" { '
+                '"CompatToolMapping" { "0" { "name" "%s" } '
+                '"%s" { "name" "steamlinuxruntime" } } } } } }' % (TOOL, app))
+            page.mapping[app] = "steamlinuxruntime"
+            page.sets.clear()
+            state = self.reconcile(page)
+            self.assertEqual(page.sets, [(app, COMPAT["FEX_TOOL"])])
+            self.assertEqual(state["native"], [])
+            self.assertEqual(state["auto"], {})
         finally:
             COMPAT["native_targets"] = original_native_targets
 
