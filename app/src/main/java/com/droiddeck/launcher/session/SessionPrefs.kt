@@ -516,6 +516,23 @@ object SessionPrefs {
         prefs(context).edit().putBoolean("vkBridge", on).putBoolean("bridgeFellBack", false).apply()
     }
 
+    /**
+     * The Mali bridge's safe mode, on by default: the bridge keeps its proven workarounds wherever
+     * its startup probe has not verified this GPU and driver. Off is performance mode (native paths
+     * wherever the probe passed). Reaches the server as <cache dir>/mode (VkBridgeComponent) and
+     * the guest as VKBRIDGE_MODE (SessionService).
+     */
+    @JvmStatic
+    fun vkBridgeSafe(context: Context): Boolean = prefs(context).getBoolean("vkBridgeSafe", true)
+
+    fun setVkBridgeSafe(context: Context, on: Boolean) {
+        prefs(context).edit().putBoolean("vkBridgeSafe", on).apply()
+    }
+
+    /** The bridge's mode as the server and the client read it: "safe" or "performance". */
+    @JvmStatic
+    fun vkBridgeMode(context: Context): String = if (vkBridgeSafe(context)) "safe" else "performance"
+
     fun setZinkLazy(context: Context, on: Boolean) {
         prefs(context).edit().putBoolean("zinkLazy", on).apply()
     }
