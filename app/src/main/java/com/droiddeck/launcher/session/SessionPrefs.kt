@@ -379,10 +379,12 @@ object SessionPrefs {
     /**
      * The Mali bridge (experimental): the session's Vulkan goes through the app's bridge server to
      * the phone's own driver instead of Turnip (external/MaliBridge). Only offered, and only used, on a
-     * GPU without Adreno's KGSL; off by default everywhere.
+     * GPU without Adreno's KGSL. Off by default, except in the MaliBridge build (DroidDeck Mali,
+     * an applicationId ending in ".mali"), which is only for Mali devices.
      */
     @JvmStatic
-    fun vkBridge(context: Context): Boolean = prefs(context).getBoolean("vkBridge", false)
+    fun vkBridge(context: Context): Boolean =
+        prefs(context).getBoolean("vkBridge", context.packageName.endsWith(".mali"))
 
     fun setVkBridge(context: Context, on: Boolean) {
         prefs(context).edit().putBoolean("vkBridge", on).apply()
