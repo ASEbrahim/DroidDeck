@@ -70,13 +70,60 @@ def variantSuffixes = rootProject.file('tools/release/variants.txt').readLines()
     .collect { def f = it.trim().split(/\s+/); "${f[1]}=${f[2] == '-' ? '' : f[2]}" }
     .join(';')
 
+// Side-by-side builds, such as the MaliBridge test build: another applicationId, so the APK installs
+// next to the standard app, and its own launcher name. DROIDDECK_APP_ID_SUFFIX (-Pdroiddeck.appIdSuffix,
+// e.g. ".mali") is appended to com.droiddeck.launcher; DROIDDECK_APPLICATION_ID (-Pdroiddeck.applicationId)
+// sets the whole id instead. DROIDDECK_APP_LABEL (-Pdroiddeck.appLabel) names the app in every language,
+// "DroidDeck <Suffix>" by default for a suffix build. Unset, the build is the standard one. The
+// namespace (R, BuildConfig, the JNI class names) stays com.droiddeck.launcher either way.
+def buildSetting = { String env, String property ->
+    (providers.environmentVariable(env).getOrNull() ?: project.findProperty(property))?.toString()?.trim() ?: ''
+}
+def standardApplicationId = 'com.droiddeck.launcher'
+def appIdSuffix = buildSetting('DROIDDECK_APP_ID_SUFFIX', 'droiddeck.appIdSuffix')
+def appIdOverride = buildSetting('DROIDDECK_APPLICATION_ID', 'droiddeck.applicationId')
+if (appIdSuffix && appIdOverride) {
+    throw new GradleException('Set DROIDDECK_APP_ID_SUFFIX or DROIDDECK_APPLICATION_ID, not both')
+}
+if (appIdSuffix && !(appIdSuffix ==~ /(\.[a-z][a-z0-9_]*)+/)) {
+    throw new GradleException("DROIDDECK_APP_ID_SUFFIX must look like .mali, not '${appIdSuffix}'")
+}
+def droiddeckApplicationId = appIdOverride ?: standardApplicationId + appIdSuffix
+if (!(droiddeckApplicationId ==~ /[a-zA-Z][a-zA-Z0-9_]*(\.[a-zA-Z][a-zA-Z0-9_]*)+/)) {
+    throw new GradleException("Not an Android package name: '${droiddeckApplicationId}'")
+}
+def appLabel = buildSetting('DROIDDECK_APP_LABEL', 'droiddeck.appLabel')
+if (!appLabel && appIdSuffix) {
+    appLabel = 'DroidDeck ' + appIdSuffix.tokenize('.').collect { it.capitalize() }.join(' ')
+}
+if (appLabel) {
+    // app_name, overridden for every language main/res translates it into: the build types' source
+    // sets take precedence over main, so the 30-odd strings.xml stay as they are.
+    def escaped = appLabel.replace('\\', '\\\\').replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+        .replace("'", "\\'").replace('"', '\\"').replaceFirst(/^([@?])/, '\\\\$1')
+    def labelRes = layout.buildDirectory.dir('generated/res/appLabel').get().asFile
+    labelRes.deleteDir()
+    file('src/main/res').listFiles().findAll { dir ->
+        dir.isDirectory() && dir.name ==~ /values(-.+)?/ && new File(dir, 'strings.xml').with { it.isFile() && it.text.contains('name="app_name"') }
+    }.each { dir ->
+        new File(labelRes, dir.name).mkdirs()
+        new File(labelRes, "${dir.name}/strings.xml").text =
+            "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<resources>\n    <string name=\"app_name\">${escaped}</string>\n</resources>\n"
+    }
+    android.sourceSets.debug.res.srcDir(labelRes)
+    android.sourceSets.release.res.srcDir(labelRes)
+}
+if (droiddeckApplicationId != standardApplicationId || appLabel) {
+    logger.lifecycle("DroidDeck side-by-side build: ${droiddeckApplicationId}" + (appLabel ? ", \"${appLabel}\"" : ''))
+}
+
 android {
     namespace 'com.droiddeck.launcher'
     compileSdk 34
     ndkVersion project.findProperty('ndkVersion') ?: '27.3.13750724'
 
     defaultConfig {
-        applicationId "com.droiddeck.launcher"
+        applicationId droiddeckApplicationId
         minSdkVersion 26
         targetSdkVersion 28
         versionCode 13

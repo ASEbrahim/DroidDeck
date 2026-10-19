@@ -15,6 +15,12 @@ sdk_dir=${ANDROID_HOME:-${ANDROID_SDK_ROOT:-"${HOME}/Library/Android/sdk"}}
 java_dir=${JAVA_HOME:-"/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home"}
 image_name=${DROIDDECK_BUILD_IMAGE:-droiddeck-local-cross:24.04-v3}
 build_variant=${DROIDDECK_BUILD_VARIANT:-release}
+# A side-by-side build (app/build.gradle reads these): DROIDDECK_APP_ID_SUFFIX=.mali makes
+# com.droiddeck.launcher.mali, "DroidDeck Mali"; DROIDDECK_APPLICATION_ID sets the whole id and
+# DROIDDECK_APP_LABEL the name. Unset, the standard com.droiddeck.launcher.
+application_id=${DROIDDECK_APPLICATION_ID:-com.droiddeck.launcher${DROIDDECK_APP_ID_SUFFIX:-}}
+export DROIDDECK_APP_ID_SUFFIX=${DROIDDECK_APP_ID_SUFFIX:-} DROIDDECK_APPLICATION_ID=${DROIDDECK_APPLICATION_ID:-}
+export DROIDDECK_APP_LABEL=${DROIDDECK_APP_LABEL:-}
 case "$build_variant" in
     debug) gradle_task=assembleDebug ;;
     release) gradle_task=assembleRelease ;;
@@ -346,6 +352,14 @@ if [[ ! -x "${build_tools}/zipalign" || ! -x "${build_tools}/apksigner" ]]; then
     exit 1
 fi
 
+if [[ -x "${build_tools}/aapt2" ]]; then
+    apk_package=$("${build_tools}/aapt2" dump packagename "${apk}")
+    if [[ "${apk_package}" != "${application_id}" ]]; then
+        echo "The APK's package is ${apk_package}, not ${application_id}." >&2
+        exit 1
+    fi
+fi
+
 "${build_tools}/zipalign" -p -f 4 "${apk}" "${apk}.aligned"
 "${build_tools}/apksigner" sign \
     --ks "${repo_root}/keystore/testkey.p12" --ks-type PKCS12 --ks-pass pass:android \
@@ -380,6 +394,12 @@ if [[ -z "${signing_env}" ]]; then
             "$(dirname "$(git -C "${repo_root}" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || echo .)")/.signing.env"; do
         [[ -f "${candidate}" ]] && { signing_env=${candidate}; break; }
     done
+fi
+if [[ -n "${signing_env}" && "${application_id}" != com.droiddeck.launcher ]]; then
+    # sign-apk.sh signs the variants in tools/release/variants.txt; a side-by-side build is signed
+    # by whoever ships it.
+    echo "Not signing ${application_id} with DroidDeck's key: it is not a release variant (test key only)"
+    signing_env=
 fi
 if [[ -n "${signing_env}" ]]; then
     echo "Signing with DroidDeck's key (${signing_env})"
