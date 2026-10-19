@@ -12,6 +12,7 @@ import sys
 import tempfile
 import textwrap
 import unittest
+import unittest.mock
 
 TOOLS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(TOOLS))
@@ -128,6 +129,36 @@ class DroiddeckctlTest(FakeAdbTest):
         self.assertEqual(0, code)
         self.assertEqual("READY", out["session"]["phase"])
         self.assertEqual("fake-1", out["deviceSerial"])
+
+    def uris(self):
+        return [e["args"][e["args"].index("--uri") + 1] for e in self.calls() if "--uri" in e["args"]]
+
+    def test_the_package_defaults_to_the_standard_build(self):
+        self.configure({"state": state()})
+        with unittest.mock.patch.dict(os.environ):
+            os.environ.pop("DROIDDECK_PACKAGE", None)
+            self.assertEqual(0, self.run_ctl("state")[0])
+        self.assertEqual(["content://com.droiddeck.launcher.agent"], self.uris())
+
+    def test_package_option_and_environment_pick_a_side_by_side_build(self):
+        self.configure({"state": state()})
+        with unittest.mock.patch.dict(os.environ, {"DROIDDECK_PACKAGE": "com.droiddeck.launcher.mali"}):
+            self.assertEqual(0, self.run_ctl("state")[0])
+            self.assertEqual(0, self.run_ctl("--package", "com.example.other", "state")[0])
+        with unittest.mock.patch.dict(os.environ):
+            os.environ.pop("DROIDDECK_PACKAGE", None)
+            self.assertEqual(0, self.run_ctl("state")[0])
+        self.assertEqual(["content://com.droiddeck.launcher.mali.agent", "content://com.example.other.agent",
+                          "content://com.droiddeck.launcher.agent"], self.uris())
+
+    def test_a_bad_package_is_refused_before_any_provider_call(self):
+        with unittest.mock.patch.dict(os.environ, {"DROIDDECK_PACKAGE": "com.droiddeck;reboot"}):
+            code, out = self.run_ctl("state")
+        self.assertEqual(2, code)
+        self.assertEqual("INVALID_REQUEST", out["error"]["code"])
+        self.assertFalse(self.uris())
+        with self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()):
+            ctl.build_parser().parse_args(["--package", "not a package", "state"])
 
     def test_launch_sends_the_app_id_and_waits_for_focus(self):
         self.configure({

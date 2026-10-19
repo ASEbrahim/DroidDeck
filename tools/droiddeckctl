@@ -18,10 +18,25 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from adb_device import DeviceResolutionError, resolve_serial
 
 
-AUTHORITY = "content://com.droiddeck.launcher.agent"
-PACKAGE = "com.droiddeck.launcher"
+DEFAULT_PACKAGE = "com.droiddeck.launcher"
+PACKAGE_PATTERN = re.compile(r"[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+")
+PACKAGE = DEFAULT_PACKAGE
+AUTHORITY = f"content://{DEFAULT_PACKAGE}.agent"
 STEAM_CLIENT_APP = 769
 REQUEST_CAP = 256 * 1024
+
+
+def package_name(value: str) -> str:
+    if not PACKAGE_PATTERN.fullmatch(value):
+        raise argparse.ArgumentTypeError(f"not an Android package name: {value!r}")
+    return value
+
+
+def use_package(package: str) -> None:
+    """Target this build of the app: its package and its agent provider (<package>.agent)."""
+    global PACKAGE, AUTHORITY
+    PACKAGE = package
+    AUTHORITY = f"content://{package}.agent"
 
 
 class ControlError(RuntimeError):
@@ -323,7 +338,19 @@ def input_request(args: argparse.Namespace) -> dict:
     raise ControlError(f"Unknown input type {kind}", "INVALID_INPUT")
 
 
+def selected_package(args: argparse.Namespace) -> str:
+    if getattr(args, "package", None):
+        return args.package
+    configured = os.environ.get("DROIDDECK_PACKAGE", "").strip()
+    if configured:
+        if not PACKAGE_PATTERN.fullmatch(configured):
+            raise ControlError(f"DROIDDECK_PACKAGE is not an Android package name: {configured!r}", "INVALID_REQUEST")
+        return configured
+    return DEFAULT_PACKAGE
+
+
 def execute(args: argparse.Namespace, adb: str, serial: str) -> dict:
+    use_package(selected_package(args))
     command = args.command
 
     if command == "state":
@@ -520,6 +547,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--adb", help="adb executable (defaults to ADB, PATH, or the Android SDK)")
     parser.add_argument("--serial", help="ADB serial; defaults to ADB_SERIAL or ANDROID_SERIAL")
+    parser.add_argument("--package", type=package_name,
+                        help=f"the app's package, for side-by-side builds such as {DEFAULT_PACKAGE}.mali; "
+                             f"defaults to DROIDDECK_PACKAGE or {DEFAULT_PACKAGE}")
     commands = parser.add_subparsers(dest="command", required=True)
 
     state = commands.add_parser("state", help="print machine-readable session state")

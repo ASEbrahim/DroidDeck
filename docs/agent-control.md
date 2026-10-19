@@ -68,6 +68,11 @@ de-duplicates transports that report the same device serial and asks for an expl
 multiple devices remain. Pass `--serial` before the command to choose directly; set `ADB` (or pass
 `--adb`) to choose an adb executable. `tools/deploy_local.sh` uses the same resolver.
 
+A side-by-side build with another package (for example `com.droiddeck.launcher.mali`, built with
+`DROIDDECK_APP_ID_SUFFIX=.mali`) is reached with `--package com.droiddeck.launcher.mali` before the
+command, or `DROIDDECK_PACKAGE=com.droiddeck.launcher.mali`; the provider is then
+`content://<package>.agent`. `tools/droiddeck-scenario` takes the same option.
+
 Every command writes one JSON object to stdout and its resolved serial to stderr. Exit codes: 0
 success, 2 invalid or rejected command, 3 ADB or device error, 4 session error, 5 timeout, 6
 artifact or file error, 7 debugging tools disabled.
