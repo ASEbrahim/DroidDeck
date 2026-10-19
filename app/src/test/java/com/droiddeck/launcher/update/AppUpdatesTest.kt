@@ -256,6 +256,16 @@ class AppUpdatesTest {
     }
 
     @Test
+    fun aSideBySideBuildTheCatalogDoesNotListIsOfferedNoDownload() {
+        val parsed = AppUpdates.readPublishedCatalog(publishedCatalog(), "com.droiddeck.launcher.mali", 123L)
+        val preview = parsed.preview!!
+        assertNull(preview.apk)
+        val me = me("0123456789abcdef")
+        assertEquals(com.droiddeck.launcher.R.string.upd_block_no_apk, AppUpdates.installBlock(preview, me)!!.text)
+        assertEquals(Offer.UPDATE, AppUpdates.offer(parsed, Follow(Channel.NIGHTLY), me))
+    }
+
+    @Test
     fun publishedCatalogReadsOptionalPreviewHistoryAndDeduplicates() {
         val first = "a".repeat(40)
         val newest = "b".repeat(40)
