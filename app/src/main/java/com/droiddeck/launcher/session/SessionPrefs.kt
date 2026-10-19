@@ -433,7 +433,7 @@ object SessionPrefs {
 
     /**
      * The Mali bridge (experimental): the session's Vulkan goes through the app's bridge server to
-     * the phone's own driver instead of Turnip (tools/vkbridge). Only offered, and only used, on a
+     * the phone's own driver instead of Turnip (external/MaliBridge). Only offered, and only used, on a
      * GPU without Adreno's KGSL; off by default everywhere.
      */
     @JvmStatic

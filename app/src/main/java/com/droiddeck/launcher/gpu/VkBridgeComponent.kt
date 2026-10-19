@@ -7,7 +7,7 @@ import com.droiddeck.launcher.core.SessionPart
 import java.io.File
 
 /**
- * The Vulkan bridge server (tools/vkbridge, app/src/main/cpp/vkbridge) for one session.
+ * The Vulkan bridge server (external/MaliBridge) for one session.
  *
  * On a GPU without Adreno's KGSL nothing inside the Linux runtime can reach the GPU: Turnip needs
  * KGSL, and the phone's own driver is a bionic library a glibc program cannot load. The server is
