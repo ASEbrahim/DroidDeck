@@ -1,6 +1,7 @@
 package com.droiddeck.launcher.session
 
 import android.content.Context
+import android.content.ContextWrapper
 import android.net.LocalServerSocket
 import android.net.LocalSocket
 import android.os.Build
@@ -67,6 +68,15 @@ class RumbleComponentTest {
         shadowOf(Looper.getMainLooper()).idle()
         effect()
         assertTrue(shadowOf(vibrator).isVibrating)
+    }
+
+    @Test fun sideBySideBuildsListenOnTheirOwnSocket() {
+        val names = listOf("com.droiddeck.launcher", "com.droiddeck.launcher.mali", "com.tencent.ig").map { name ->
+            RumbleComponent.socketName(object : ContextWrapper(context) {
+                override fun getPackageName() = name
+            })
+        }
+        assertEquals(listOf("droiddeck-rumble", "com.droiddeck.launcher.mali.rumble", "com.tencent.ig.rumble"), names)
     }
 
     @Test fun aControllerWithMotorsGetsTheEffectInsteadOfThePhone() {

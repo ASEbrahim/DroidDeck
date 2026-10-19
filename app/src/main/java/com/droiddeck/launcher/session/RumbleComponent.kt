@@ -1,5 +1,6 @@
 package com.droiddeck.launcher.session
 
+import android.content.Context
 import android.net.LocalServerSocket
 import android.content.SharedPreferences
 import android.os.Build
@@ -38,7 +39,7 @@ class RumbleComponent : SessionPart() {
 
     override fun start() {
         val ctx = app() ?: return
-        val s = try { LocalServerSocket(NAME) } catch (e: Exception) { Log.w(TAG, "rumble: no listener ($e)"); return }
+        val s = try { LocalServerSocket(socketName(ctx)) } catch (e: Exception) { Log.w(TAG, "rumble: no listener ($e)"); return }
         val vibrator = if (Build.VERSION.SDK_INT >= 31) ctx.getSystemService(VibratorManager::class.java)?.defaultVibrator
             else @Suppress("DEPRECATION") ctx.getSystemService(Vibrator::class.java)
         phone = vibrator?.takeIf { it.hasVibrator() }?.let { PhoneMotors(it) }
@@ -150,6 +151,14 @@ class RumbleComponent : SessionPart() {
     companion object {
         private const val TAG = "SessionService"
         const val NAME = "droiddeck-rumble"
+
+        /**
+         * The abstract socket the game-side preload (fakeinput_steam) sends motor commands to, passed
+         * to the guest as FAKE_EVDEV_RUMBLE_SOCKET. Abstract names are shared by every app on the
+         * device, so a side-by-side build (another applicationId) listens on its own name.
+         */
+        fun socketName(context: Context): String =
+            if (context.packageName == "com.droiddeck.launcher") NAME else "${context.packageName}.rumble"
         const val MIN_GAP_MS = 50L
 
         private fun oneShot(vibrator: Vibrator, strength: Int, ms: Long): VibrationEffect {

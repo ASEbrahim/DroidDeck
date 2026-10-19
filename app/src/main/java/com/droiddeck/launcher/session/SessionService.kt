@@ -634,6 +634,7 @@ class SessionService : Service() {
         if (!rings.isNullOrEmpty()) guest.add("FAKE_EVDEV_MEMFD_PATHS=$rings")
         guest.add("FAKE_EVDEV_IDENTITY=xbox360")
         guest.add("FAKE_EVDEV_VIBRATION=1")
+        guest.add("FAKE_EVDEV_RUMBLE_SOCKET=" + RumbleComponent.socketName(this))
         val uinput = !File(Environment.getExternalStorageDirectory(), NO_UINPUT_SWITCH).exists()
         val wantsDeck = uinput && SessionState.mode == MODE_STEAM &&
             SessionState.steamUi != "desktop" &&
