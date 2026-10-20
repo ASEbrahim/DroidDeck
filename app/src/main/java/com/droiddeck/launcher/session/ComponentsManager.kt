@@ -7,6 +7,7 @@ import android.util.Log
 import com.droiddeck.launcher.core.Downloader
 import com.droiddeck.launcher.core.FileUtils
 import com.droiddeck.launcher.core.GameEnvironment
+import com.droiddeck.launcher.gpu.AppVulkan
 import com.droiddeck.launcher.gpu.GpuInfo
 import com.droiddeck.launcher.runtime.LinuxRuntime
 import com.github.luben.zstd.ZstdInputStream
@@ -623,29 +624,32 @@ object ComponentsManager {
     }
 
 
-    fun swap(context: Context, protonId: String, file: String): String = synchronized(lock) {
+    /** auto: chosen by DroidDeck for this device (bridgeDxvk), not by the player; replaced or undone when that changes. */
+    fun swap(context: Context, protonId: String, file: String, auto: Boolean = false): String = synchronized(lock) {
         val p = proton(context, protonId)
         val wcp = File(packagesDir(context), safeName(file))
         val info = packageInfo(context, wcp)
         val state = loadState(context)
         if (inUse(context, p)) {
-            state.sub("queued").sub(p.id).put(info.comp, JSONObject().put("kind", "package").put("file", wcp.name).put("label", info.version))
+            state.sub("queued").sub(p.id).put(info.comp, JSONObject().put("kind", "package").put("file", wcp.name).put("label", info.version)
+                .apply { if (auto) put("auto", true) })
             saveState(context, state)
             return context.getString(R.string.cmgr_swap_queued, LABEL[info.comp], info.version, p.name)
         }
-        applyPackage(context, p, info, wcp, state)
+        applyPackage(context, p, info, wcp, state, auto)
         state.sub("queued").optJSONObject(p.id)?.remove(info.comp)
         saveState(context, state)
         context.getString(R.string.cmgr_swap_done, LABEL[info.comp], info.version, p.name)
     }
 
-    private fun applyPackage(context: Context, p: Proton, info: Package, wcp: File, state: JSONObject) {
+    private fun applyPackage(context: Context, p: Proton, info: Package, wcp: File, state: JSONObject, auto: Boolean = false) {
         ensureOriginal(context, p, info.comp, state)
         val hashes = installFiles(context, p.dir, info.comp, wcp)
         state.sub("active").sub(p.id).put(info.comp, JSONObject()
             .put("file", wcp.name).put("label", info.version).put("protonVersion", p.version)
             .put("files", JSONObject(hashes.filterKeys { owned(info.comp, it) } as Map<*, *>))
-            .put("at", System.currentTimeMillis() / 1000))
+            .put("at", System.currentTimeMillis() / 1000)
+            .apply { if (auto) put("auto", true) })
         Log.i(TAG, "swapped ${info.comp} ${info.version} into ${p.name} ${p.version}")
     }
 
@@ -693,7 +697,7 @@ object ComponentsManager {
                         applyOriginal(context, p, comp, v, File(originalsDir(context), "$pid/${safeName(v)}/$comp.wcp"), state)
                     } else {
                         val wcp = File(packagesDir(context), q.optString("file"))
-                        applyPackage(context, p, packageInfo(context, wcp), wcp, state)
+                        applyPackage(context, p, packageInfo(context, wcp), wcp, state, q.optBoolean("auto"))
                     }
                     done += "${LABEL[comp]} ${q.optString("label")} → ${p.name}"
                 }.onFailure { Log.w(TAG, "queued $comp for ${p.name}", it) }
@@ -799,6 +803,29 @@ object ComponentsManager {
     internal fun forcedPackageWanted(activeFile: String?, protonVersionMatches: Boolean): Boolean =
         activeFile.isNullOrEmpty() || !protonVersionMatches
 
+    /**
+     * The DXVK for a bridge session, from what the games see (AppVulkan). Proton's own DXVK 3 needs
+     * Vulkan 1.3, shaderInt64 and 256 bytes of push constants (DXVK 2.7 added the last two); DXVK 2.0
+     * to 2.6 need Vulkan 1.3 only; 1.10.3, the last 1.x, needs Vulkan 1.1 (and only extensions the
+     * bridge has or emulates). null: Proton's own is fine, or too little is known to choose.
+     * D3D12 (VKD3D-Proton) is not helped: it needs Vulkan 1.3.
+     */
+    internal fun bridgeDxvk(vk: AppVulkan?): ForcedPackage? = when {
+        vk == null -> null
+        !vk.atLeast(1, 1) -> null
+        !vk.atLeast(1, 3) -> ForcedPackage(emptySet(), "dxvk", DXVK_FOR_VULKAN_1_1, "Dxvk-Linux")
+        vk.shaderInt64 == false || (vk.maxPushConstants ?: 256) < 256 ->
+            ForcedPackage(emptySet(), "dxvk", DXVK_FOR_VULKAN_1_3_NO_INT64, "Dxvk-Linux")
+        else -> null
+    }
+
+    internal const val DXVK_FOR_VULKAN_1_1 = "dxvk-1.10.3-linux.wcp"
+    internal const val DXVK_FOR_VULKAN_1_3_NO_INT64 = "dxvk-2.6.2-linux.wcp"
+
+    /** A choice DroidDeck made on its own (swap(auto = true)) that the current rule no longer wants. */
+    internal fun autoChoiceStale(entry: JSONObject?, wantedFile: String?): Boolean =
+        entry != null && entry.optBoolean("auto") && entry.optString("file") != wantedFile
+
     internal fun catalogMatch(items: List<CatalogItem>, file: String, release: String): CatalogItem? =
         items.firstOrNull { it.file == file && it.release == release }
 
@@ -807,7 +834,23 @@ object ComponentsManager {
         { file, release -> catalogItem(context, file, release) },
         { download(context, it) {} },
         { id, file -> swap(context, id, file) },
+        vulkan = AppVulkan.detect(context),
+        bridgeSession = com.droiddeck.launcher.core.DeviceSupport.vkBridge(context),
+        applyAuto = { id, file -> swap(context, id, file, auto = true) },
+        undoAuto = { id, comp -> undoAutoChoice(context, id, comp) },
     )
+
+    /** Back to the Proton's own copy (or just forgotten, when a Proton update already put it back). */
+    internal fun undoAutoChoice(context: Context, protonId: String, comp: String): String = synchronized(lock) {
+        val p = proton(context, protonId)
+        val state = loadState(context)
+        val entry = state.sub("active").optJSONObject(p.id)?.optJSONObject(comp)
+        if (entry?.optString("protonVersion") == p.version && originalFile(context, p, comp).isFile)
+            return restore(context, protonId, comp, safeName(p.version))
+        state.sub("active").optJSONObject(p.id)?.remove(comp)
+        saveState(context, state)
+        "${LABEL[comp]}: ${p.name} keeps its own copy"
+    }
 
     internal fun ensureForcedPackages(
         context: Context,
@@ -815,16 +858,29 @@ object ComponentsManager {
         lookup: (file: String, release: String) -> CatalogItem?,
         fetch: (CatalogItem) -> Unit,
         apply: (protonId: String, file: String) -> String,
+        vulkan: AppVulkan? = null,
+        bridgeSession: Boolean = false,
+        applyAuto: (protonId: String, file: String) -> String = apply,
+        undoAuto: (protonId: String, comp: String) -> String = { _, _ -> "" },
     ): String? {
-        val rules = FORCED_PACKAGES.filter { it.matches(gpu) }
-        if (rules.isEmpty()) return null
+        val bridgeRule = if (bridgeSession) bridgeDxvk(vulkan) else null
+        val rules = FORCED_PACKAGES.filter { it.matches(gpu) }.map { it to false } + listOfNotNull(bridgeRule?.let { it to true })
         val installed = protons(context)
         val lines = mutableListOf<String>()
-        for (rule in rules) {
+        if (bridgeSession) {
+            // What DroidDeck chose on its own for a device that now sees a different Vulkan.
+            val state = loadState(context)
+            for (p in installed) {
+                val entry = state.optJSONObject("active")?.optJSONObject(p.id)?.optJSONObject("dxvk")
+                if (bridgeRule == null && autoChoiceStale(entry, null)) lines.add(undoAuto(p.id, "dxvk"))
+            }
+        }
+        for ((rule, auto) in rules) {
             val state = loadState(context)
             val targets = installed.filter { p ->
                 val active = state.optJSONObject("active")?.optJSONObject(p.id)?.optJSONObject(rule.comp)
-                forcedPackageWanted(active?.optString("file"), active?.optString("protonVersion") == p.version)
+                forcedPackageWanted(active?.optString("file"), active?.optString("protonVersion") == p.version) ||
+                    (auto && autoChoiceStale(active, rule.file))
             }
             if (targets.isEmpty()) continue
             val missing = missingPackage(context, rule, lookup, fetch)
@@ -832,9 +888,10 @@ object ComponentsManager {
                 lines.add(missing)
                 continue
             }
-            lines.add(targets.joinToString("; ") { apply(it.id, rule.file) })
+            if (auto) lines.add("${vulkan?.label}: DXVK ${rule.file}")
+            lines.add(targets.joinToString("; ") { if (auto) applyAuto(it.id, rule.file) else apply(it.id, rule.file) })
         }
-        return lines.joinToString("; ").ifEmpty { null }
+        return lines.filter { it.isNotEmpty() }.joinToString("; ").ifEmpty { null }
     }
 
     private fun missingPackage(
