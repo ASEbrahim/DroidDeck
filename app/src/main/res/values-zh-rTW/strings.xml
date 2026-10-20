@@ -2215,4 +2215,9 @@
     <string name="drawer_component_downloads">下載元件</string>
     <string name="drawer_component_downloads_hint">下載內容與「元件」頁面共用。在上方選擇已下載的版本，即可在下次啟動遊戲時使用。</string>
     <string name="drawer_component_choose_download">選擇要下載的版本</string>
+    <string name="setup_bridge_dxvk">DXVK</string>
+    <string name="setup_bridge_dxvk_auto">DXVK：自動</string>
+    <string name="setup_bridge_dxvk_proton">DXVK：Proton 內建</string>
+    <string name="setup_bridge_dxvk_auto_detail">此 GPU 的 Vulkan 版本對 Proton 內建的 DXVK 來說太舊時，改用較舊的 DXVK。</string>
+    <string name="setup_bridge_dxvk_proton_detail">每個 Proton 都使用內建的 DXVK，即使此 GPU 的 Vulkan 版本可能太舊。</string>
 </resources>
