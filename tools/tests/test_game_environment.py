@@ -217,6 +217,75 @@ class GameEnvironmentTest(unittest.TestCase):
             (other / "Other.exe").touch()
             self.assertEqual(MODULE["engine_fixes"](str(other / "Other.exe"), []), ({}, [], []))
 
+    def make_game(self, tmp, exe, *names):
+        folder = Path(tmp) / Path(exe).stem
+        folder.mkdir()
+        for name in (exe,) + names:
+            path = folder / name
+            if name.endswith("_Data"):
+                path.mkdir()
+            else:
+                path.touch()
+        return str(folder / exe)
+
+    def test_re_engine_keeps_tso_at_every_level_but_off(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            exe = self.make_game(tmp, "re2.exe", "re_chunk_000.pak")
+            for level in ("on", "fast"):
+                env, _, notes = MODULE["engine_fixes"](exe, [], level)
+                self.assertEqual(env, {"FEX_TSOENABLED": "1", "FEX_HALFBARRIERTSOENABLED": "1"}, level)
+                self.assertEqual(len(notes), 1)
+            self.assertEqual(MODULE["engine_fixes"](exe, [], "off"), ({}, [], []))
+            self.assertEqual(MODULE["engine_fixes"](exe, [])[0]["FEX_TSOENABLED"], "1")
+
+    def test_speed_presets_only_when_asked_for(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            games = [self.make_game(tmp, "TheForest.exe", "TheForest_Data"),
+                     self.make_game(tmp, "OuterWilds.exe", "UnityPlayer.dll"),
+                     self.make_game(tmp, "sekiro.exe"),
+                     self.make_game(tmp, "DarkSoulsIII.exe"),
+                     self.make_game(tmp, "Astro-Win64-Shipping.exe")]
+            for exe in games:
+                self.assertEqual(MODULE["engine_fixes"](exe, [], "on"), ({}, [], []), exe)
+                env, _, notes = MODULE["engine_fixes"](exe, [], "fast")
+                self.assertEqual(env["FEX_TSOENABLED"], "0", exe)
+                self.assertIn("experimental", notes[0])
+            other = self.make_game(tmp, "Other.exe")
+            self.assertEqual(MODULE["engine_fixes"](other, [], "fast"), ({}, [], []))
+
+    def test_safety_fixes_win_over_speed_ones(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            unity_re = self.make_game(tmp, "Odd.exe", "UnityPlayer.dll", "re_chunk_000.pak")
+            self.assertEqual(MODULE["engine_fixes"](unity_re, [], "fast")[0]["FEX_TSOENABLED"], "1")
+            unity_net = self.make_game(tmp, "Net.exe", "Net_Data", "coreclr.dll")
+            env = MODULE["engine_fixes"](unity_net, [], "fast")[0]
+            self.assertEqual((env["FEX_TSOENABLED"], env["FEX_MULTIBLOCK"]), ("1", "0"))
+            # .NET full TSO predates the switch and stays when it is off.
+            self.assertEqual(MODULE["engine_fixes"](unity_net, [], "off")[0]["FEX_TSOENABLED"], "1")
+
+    def test_cpu_preset_level_follows_game_then_shared_then_session(self):
+        level = MODULE["cpu_preset_level"]
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "game-environment.json"
+            self.assertEqual(level({}, "42", path), "on")
+            self.assertEqual(level({"DROIDDECK_CPU_PRESETS": "FAST"}, "42", path), "fast")
+            self.assertEqual(level({"DROIDDECK_CPU_PRESETS": "bogus"}, "42", path), "on")
+            self.assertEqual(level({"DROIDDECK_CPU_PRESETS": "0"}, "42", path), "off")
+            path.write_text(json.dumps({"version": 1, "shared": {"DROIDDECK_CPU_PRESETS": "off"},
+                                        "games": {"42": {"DROIDDECK_CPU_PRESETS": "fast"}}}))
+            self.assertEqual(level({}, "42", path), "fast")
+            self.assertEqual(level({}, "7", path), "off")
+            path.write_text(json.dumps({"version": 1, "games": {"7": {"DROIDDECK_CPU_PRESETS": None}}}))
+            self.assertEqual(level({"DROIDDECK_CPU_PRESETS": "fast"}, "7", path), "on")
+            path.write_text("{broken")
+            self.assertEqual(level({"DROIDDECK_CPU_PRESETS": "fast"}, "42", path), "fast")
+
+    def test_the_game_profile_still_beats_the_re_engine_fix(self):
+        config = {"version": 1, "shared": {"FEX_TSOENABLED": "0"}, "games": {"42": {"FEX_TSOENABLED": "0"}}}
+        fixes = {"FEX_TSOENABLED": "1", "FEX_HALFBARRIERTSOENABLED": "1"}
+        self.assertEqual(MODULE["apply_config"]({}, config, "42", fixes)["FEX_TSOENABLED"], "0")
+        self.assertEqual(MODULE["apply_config"]({}, config, "7", fixes)["FEX_TSOENABLED"], "1")
+
     def test_a_new_fix_only_needs_registering(self):
         with tempfile.TemporaryDirectory() as tmp:
             (Path(tmp) / "Game.exe").touch()

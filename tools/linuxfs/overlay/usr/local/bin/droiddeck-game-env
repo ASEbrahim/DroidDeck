@@ -86,6 +86,20 @@ def dotnet_memory_ordering(game):
 
 
 @fix
+def re_engine_memory_ordering(game):
+    """RE Engine games (RE2/3/4/7/8, DMC5, Monster Hunter Rise...) hang minutes in with a Wine
+    critical-section error when x86 memory ordering is not kept (box64 issue 1124: frequent at
+    STRONGMEM=0, rare at 1). Main TSO and the half barriers stay on whatever the general FEX
+    preset says; a game's own FEX preset still wins."""
+    if is_re_engine(game):
+        return ORDERED_FEX, [], "RE Engine: FEX main TSO and half barriers kept on (it hangs without)"
+
+
+# The FEX choices DROIDDECK_CPU_PRESETS=off turns off (the .NET one predates the switch and stays).
+CPU_FIXES = (re_engine_memory_ordering,)
+
+
+@fix
 def godot_vulkan(game):
     if is_godot(game) and not game.has_arg("--rendering-driver"):
         return {}, ["--rendering-driver", "vulkan"], "Godot: Vulkan renderer"
@@ -111,11 +125,78 @@ def skip_red_launcher(command):
     return command
 
 
-def engine_fixes(exe, args):
-    """Environment and extra arguments a game needs because of what it is built with."""
+CPU_PRESETS = "DROIDDECK_CPU_PRESETS"
+CPU_LEVELS = ("off", "on", "fast")
+
+# Main TSO and the half barriers on, the slow vector and memcpy ordering off: the ordering a game
+# needs when its threads hand data to each other without the fences x86 never needed.
+ORDERED_FEX = {"FEX_TSOENABLED": "1", "FEX_HALFBARRIERTSOENABLED": "1"}
+# No TSO at all: x86 ordering is left to luck. FEX's own config calls this likely to break a
+# multithreaded program, so it is only ever asked for (DROIDDECK_CPU_PRESETS=fast), never a default.
+UNORDERED_FEX = {"FEX_TSOENABLED": "0", "FEX_VECTORTSOENABLED": "0", "FEX_MEMCPYSETTSOENABLED": "0",
+                 "FEX_HALFBARRIERTSOENABLED": "0", "FEX_MULTIBLOCK": "1"}
+
+FROMSOFT = ("darksoulsii", "darksoulsiii", "darksoulsremastered", "sekiro", "eldenring", "armoredcore6")
+UNREAL_CPU_BOUND = ("astro-win64-shipping",)
+
+
+def cpu_preset_level(env, app_id, path):
+    """DROIDDECK_CPU_PRESETS from the game's own environment, else the shared one, else the
+    session's: off (no per-engine FEX choice), on (the default: only what keeps a game from
+    hanging) or fast (also the unordered ones, for an A/B)."""
+    value = env.get(CPU_PRESETS)
+    try:
+        with open(path, encoding="utf-8") as source:
+            config = json.load(source)
+        value = config.get("shared", {}).get(CPU_PRESETS, value)
+        value = config.get("games", {}).get(app_id, {}).get(CPU_PRESETS, value)
+    except (OSError, ValueError, AttributeError):
+        pass
+    value = (value or "on").strip().lower() if isinstance(value, str) or value is None else "on"
+    value = {"0": "off", "false": "off", "no": "off", "1": "on", "true": "on", "yes": "on"}.get(value, value)
+    return value if value in CPU_LEVELS else "on"
+
+
+def is_re_engine(game):
+    return "re_chunk_000.pak" in game.files
+
+
+def is_unity(game):
+    return "unityplayer.dll" in game.files or game.stem + "_data" in game.files
+
+
+SPEED_FIXES = []
+
+
+def speed(function):
+    SPEED_FIXES.append(function)
+    return function
+
+
+@speed
+def cpu_bound_unordered(game):
+    if is_re_engine(game) or "coreclr.dll" in game.files:
+        return None
+    if is_unity(game):
+        kind = "Unity"
+    elif game.stem in FROMSOFT:
+        kind = "FromSoftware"
+    elif game.stem in UNREAL_CPU_BOUND:
+        kind = "CPU-bound Unreal title"
+    else:
+        return None
+    return UNORDERED_FEX, [], "%s, %s=fast: FEX without TSO (experimental; set it back to on if the game hangs or crashes)" % (kind, CPU_PRESETS)
+
+
+def engine_fixes(exe, args, level="on"):
+    """Environment and extra arguments a game needs because of what it is built with. The speed
+    fixes come first, so a safety fix that also matches always has the last word."""
     game = Game(exe, args)
     env, extra, notes = {}, [], []
-    for check in FIXES:
+    checks = list(FIXES) if level != "off" else [f for f in FIXES if f not in CPU_FIXES]
+    if level == "fast":
+        checks = SPEED_FIXES + checks
+    for check in checks:
         found = check(game)
         if found:
             env.update(found[0])
@@ -377,7 +458,8 @@ def main():
         fixes = {}
         if waiting:
             command = skip_red_launcher(command)
-            fixes, extra, notes = engine_fixes(command[2], command[3:]) if len(command) > 2 else ({}, [], [])
+            level = cpu_preset_level(env, app_id, Path.home() / ".config/droiddeck/game-environment.json")
+            fixes, extra, notes = engine_fixes(command[2], command[3:], level) if len(command) > 2 else ({}, [], [])
             for note in notes:
                 print("droiddeck-game-env: " + note, file=sys.stderr)
             command += extra
