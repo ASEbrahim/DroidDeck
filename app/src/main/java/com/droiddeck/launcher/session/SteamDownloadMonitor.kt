@@ -16,6 +16,9 @@ internal class SteamDownloadMonitor {
     private var lastContentActivityAt = 0L
     private var lastReceivedBytes = -1L
     private var lastReceivedAt = 0L
+    private var lastNetworkAt = 0L
+    private var bootstrapLogLength = UNREAD
+    private var lastBootstrapGrowthAt = 0L
 
     fun poll(runtimeRoot: File, now: Long = System.currentTimeMillis(), receivedBytes: Long = -1L): Boolean {
         val current = manifests(runtimeRoot).associate { it.path to read(it) }
@@ -26,7 +29,10 @@ internal class SteamDownloadMonitor {
         previous = current
         val manifestActive = progressed || lastProgressAt > 0L && now - lastProgressAt <= MANIFEST_PROGRESS_GRACE_MS &&
             current.values.any { it.incomplete }
-        if (receiving(receivedBytes, now)) lastContentActivityAt = now
+        if (receiving(receivedBytes, now)) {
+            lastContentActivityAt = now
+            lastNetworkAt = now
+        }
         return manifestActive || readContentActivity(runtimeRoot, now)
     }
 
@@ -39,6 +45,19 @@ internal class SteamDownloadMonitor {
         return (receivedBytes - previousBytes) * 1000L / (now - previousAt) >= MIN_RECEIVE_BYTES_PER_SEC
     }
 
+    // The client's own first-run update (several hundred MB) is not an app download, so the manifests and
+    // content_log never show it. It counts as active while the app receives data or Steam's bootstrap log
+    // grows; with network = false only the log counts (after the first frame, when the received data may
+    // be the store or a game's download as well). Call after poll(), which samples the received bytes.
+    fun clientUpdateActive(runtimeRoot: File, now: Long = System.currentTimeMillis(), network: Boolean = true): Boolean {
+        val log = File(runtimeRoot, "root/.local/share/Steam/logs/bootstrap_log.txt")
+        val length = if (log.isFile) log.length() else -1L
+        if (bootstrapLogLength != UNREAD && length > bootstrapLogLength) lastBootstrapGrowthAt = now
+        bootstrapLogLength = length
+        return network && lastNetworkAt > 0L && now - lastNetworkAt <= CLIENT_UPDATE_GRACE_MS ||
+            lastBootstrapGrowthAt > 0L && now - lastBootstrapGrowthAt <= CLIENT_UPDATE_GRACE_MS
+    }
+
     fun reset() {
         previous = emptyMap()
         lastProgressAt = 0L
@@ -47,6 +66,9 @@ internal class SteamDownloadMonitor {
         lastContentActivityAt = 0L
         lastReceivedBytes = -1L
         lastReceivedAt = 0L
+        lastNetworkAt = 0L
+        bootstrapLogLength = UNREAD
+        lastBootstrapGrowthAt = 0L
     }
 
     private fun readContentActivity(runtimeRoot: File, now: Long): Boolean {
@@ -124,6 +146,8 @@ internal class SteamDownloadMonitor {
     private companion object {
         const val MANIFEST_PROGRESS_GRACE_MS = 8_000L
         const val CONTENT_ACTIVITY_GRACE_MS = 90_000L
+        const val CLIENT_UPDATE_GRACE_MS = 90_000L
+        const val UNREAD = Long.MIN_VALUE
         const val MIN_RECEIVE_BYTES_PER_SEC = 64L * 1024L
         val PATH = Regex("\"path\"\\s+\"([^\"]+)\"")
         val CONTENT_UPDATE = Regex("""AppID (\d+) (App|Workshop|Shader) update changed : (.*)""")

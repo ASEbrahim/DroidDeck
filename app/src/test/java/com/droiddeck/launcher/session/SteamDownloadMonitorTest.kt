@@ -124,6 +124,63 @@ class SteamDownloadMonitorTest {
         }
     }
 
+    @Test fun clientUpdateFollowsTheBootstrapLog() {
+        val root = Files.createTempDirectory("droiddeck-steam-download-").toFile()
+        try {
+            val log = File(root, "root/.local/share/Steam/logs/bootstrap_log.txt").apply {
+                check(parentFile?.mkdirs() != false)
+                writeText("[old session] Startup - updater built\n")
+            }
+            val monitor = SteamDownloadMonitor()
+
+            assertFalse(monitor.clientUpdateActive(root, now = 1_000L))
+            log.appendText("[now] Downloading update (1 of 465447 KB)...\n")
+            assertTrue(monitor.clientUpdateActive(root, now = 3_000L))
+            assertTrue(monitor.clientUpdateActive(root, now = 93_000L))
+            assertFalse(monitor.clientUpdateActive(root, now = 93_001L))
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test fun clientUpdateFollowsReceivedData() {
+        val root = Files.createTempDirectory("droiddeck-steam-download-").toFile()
+        try {
+            val monitor = SteamDownloadMonitor()
+
+            monitor.poll(root, now = 1_000L, receivedBytes = 0L)
+            assertFalse(monitor.clientUpdateActive(root, now = 1_000L))
+            monitor.poll(root, now = 3_000L, receivedBytes = 1_000_000L)
+            assertTrue(monitor.clientUpdateActive(root, now = 3_000L))
+            monitor.poll(root, now = 5_000L, receivedBytes = 1_000_100L)
+            assertTrue(monitor.clientUpdateActive(root, now = 93_000L))
+            assertFalse(monitor.clientUpdateActive(root, now = 93_001L))
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test fun afterTheFirstFrameOnlyTheBootstrapLogCounts() {
+        val root = Files.createTempDirectory("droiddeck-steam-download-").toFile()
+        try {
+            val log = File(root, "root/.local/share/Steam/logs/bootstrap_log.txt").apply {
+                check(parentFile?.mkdirs() != false)
+                writeText("[now] Verifying installation...\n")
+            }
+            val monitor = SteamDownloadMonitor()
+
+            monitor.poll(root, now = 1_000L, receivedBytes = 0L)
+            monitor.poll(root, now = 3_000L, receivedBytes = 1_000_000L)
+            assertFalse(monitor.clientUpdateActive(root, now = 3_000L, network = false))
+            log.appendText("[now] Downloading update (200 of 465447 KB)...\n")
+            assertTrue(monitor.clientUpdateActive(root, now = 5_000L, network = false))
+            assertTrue(monitor.clientUpdateActive(root, now = 95_000L, network = false))
+            assertFalse(monitor.clientUpdateActive(root, now = 95_001L, network = false))
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
     private fun manifest(root: File, appId: String, downloaded: Long, total: Long, flags: Int): File {
         val file = File(root, "steamapps/appmanifest_$appId.acf")
         check(file.parentFile?.mkdirs() != false)
