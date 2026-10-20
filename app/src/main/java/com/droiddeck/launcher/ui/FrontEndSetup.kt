@@ -232,6 +232,20 @@ internal fun SetupPanel(
                                     )
                                 },
                             )
+                            // ComponentsManager.bridgeDxvk: an older DXVK where this GPU's Vulkan is too
+                            // old for Proton's; the player can keep Proton's own instead.
+                            if (!s.adreno && s.vkBridge) CheckRow(
+                                CheckState.OK,
+                                stringResource(R.string.setup_bridge_dxvk),
+                                stringResource(if (s.bridgeProtonDxvk) R.string.setup_bridge_dxvk_proton_detail else R.string.setup_bridge_dxvk_auto_detail),
+                                divider = divider,
+                                action = {
+                                    SecondaryButton(
+                                        stringResource(if (s.bridgeProtonDxvk) R.string.setup_bridge_dxvk_proton else R.string.setup_bridge_dxvk_auto),
+                                        enabled = !s.sessionRunning, compact = true, onClick = { a.onBridgeProtonDxvk(!s.bridgeProtonDxvk) },
+                                    )
+                                },
+                            )
                         }
                         val runtimeCheck: @Composable (Boolean) -> Unit = { divider ->
                             CheckRow(

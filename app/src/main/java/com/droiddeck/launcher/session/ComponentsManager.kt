@@ -822,6 +822,21 @@ object ComponentsManager {
     internal const val DXVK_FOR_VULKAN_1_1 = "dxvk-1.10.3-linux.wcp"
     internal const val DXVK_FOR_VULKAN_1_3_NO_INT64 = "dxvk-2.6.2-linux.wcp"
 
+    /** Whether automatic DXVK choices go back to the Proton's own before the rules run. */
+    internal fun autoDxvkUndoWanted(bridgeSession: Boolean, keepProtonDxvk: Boolean, vulkan: AppVulkan?, bridgeRule: ForcedPackage?): Boolean =
+        !bridgeSession || keepProtonDxvk || (vulkan != null && bridgeRule == null)
+
+    /** An automatic swap still waiting for its Proton to be free is dropped with the choice. */
+    private fun dropQueuedAuto(context: Context, installed: List<Proton>) = synchronized(lock) {
+        val state = loadState(context)
+        var changed = false
+        for (p in installed) {
+            val q = state.optJSONObject("queued")?.optJSONObject(p.id) ?: continue
+            if (q.optJSONObject("dxvk")?.optBoolean("auto") == true) { q.remove("dxvk"); changed = true }
+        }
+        if (changed) saveState(context, state)
+    }
+
     /** A choice DroidDeck made on its own (swap(auto = true)) that the current rule no longer wants. */
     internal fun autoChoiceStale(entry: JSONObject?, wantedFile: String?): Boolean =
         entry != null && entry.optBoolean("auto") && entry.optString("file") != wantedFile
@@ -838,7 +853,21 @@ object ComponentsManager {
         bridgeSession = com.droiddeck.launcher.core.DeviceSupport.vkBridge(context),
         applyAuto = { id, file -> swap(context, id, file, auto = true) },
         undoAuto = { id, comp -> undoAutoChoice(context, id, comp) },
+        keepProtonDxvk = SessionPrefs.bridgeProtonDxvk(context),
     )
+
+    /**
+     * Run off the main thread after the bridge or the "Proton's own DXVK" setting changes, so an
+     * automatic DXVK goes back to the Proton's own right away instead of at the next session.
+     */
+    fun settleAutoDxvk(context: Context) {
+        val app = context.applicationContext
+        Thread({
+            runCatching { ensureForcedPackages(app) }
+                .onSuccess { if (it != null) Log.i(TAG, it) }
+                .onFailure { Log.w(TAG, "automatic DXVK", it) }
+        }, "auto-dxvk").start()
+    }
 
     /**
      * Back to the Proton's own copy, or just forgotten when a Proton update already put it back. When
@@ -871,21 +900,25 @@ object ComponentsManager {
         bridgeSession: Boolean = false,
         applyAuto: (protonId: String, file: String) -> String = apply,
         undoAuto: (protonId: String, comp: String) -> String = { _, _ -> "" },
+        keepProtonDxvk: Boolean = false,
     ): String? {
-        val bridgeRule = if (bridgeSession) bridgeDxvk(vulkan) else null
+        val chooseDxvk = bridgeSession && !keepProtonDxvk
+        val bridgeRule = if (chooseDxvk) bridgeDxvk(vulkan) else null
         val rules = FORCED_PACKAGES.filter { it.matches(gpu) }.map { it to false } + listOfNotNull(bridgeRule?.let { it to true })
         val installed = protons(context)
         val lines = mutableListOf<String>()
         // One Proton failing (a missing saved copy, an I/O error) is said and the others still get theirs.
         fun each(p: Proton, what: () -> String): String =
             runCatching(what).getOrElse { e -> Log.w(TAG, "${p.name}: ${e.message}", e); "${p.name}: ${e.message ?: e.javaClass.simpleName}" }
-        if (bridgeSession && vulkan != null) {
-            // What DroidDeck chose on its own for a device that now sees a different Vulkan. Not when
-            // nothing could be read (vulkan == null): the last choice that worked stays.
+        if (autoDxvkUndoWanted(bridgeSession, keepProtonDxvk, vulkan, bridgeRule)) {
+            // What DroidDeck chose on its own goes back to the Proton's own: the bridge is off (or this
+            // is not a bridge session), the player keeps Proton's DXVK, or the device now sees a Vulkan
+            // that needs no other. Not when nothing could be read: the last choice that worked stays.
+            dropQueuedAuto(context, installed)
             val state = loadState(context)
             for (p in installed) {
                 val entry = state.optJSONObject("active")?.optJSONObject(p.id)?.optJSONObject("dxvk")
-                if (bridgeRule == null && autoChoiceStale(entry, null)) lines.add(each(p) { undoAuto(p.id, "dxvk") })
+                if (autoChoiceStale(entry, null)) lines.add(each(p) { undoAuto(p.id, "dxvk") })
             }
         }
         for ((rule, auto) in rules) {
