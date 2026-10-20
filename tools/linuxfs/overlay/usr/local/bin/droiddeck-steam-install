@@ -37,7 +37,19 @@ fi
 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
-curl -fsSL "$cdn/$manifest" -o "$work/manifest"
+# A dropped connection (a paused session, a Wi-Fi hiccup) costs one file, not the whole first start.
+fetch() {
+  local attempt
+  for attempt in 1 2 3 4 5; do
+    curl -fsSL "$1" -o "$2" && return 0
+    rm -f "$2"
+    [ "$attempt" -lt 5 ] || break
+    echo "== droiddeck-steam-install: ${1##*/} failed (try $attempt of 5), trying again" >&2
+    sleep $((attempt * 2))
+  done
+  return 1
+}
+fetch "$cdn/$manifest" "$work/manifest"
 version=$(awk -F'"' '$2 == "version" { print $4; exit }' "$work/manifest")
 awk -F'"' '
   /^\t"/ && NF >= 3 && $4 == "" { block = $2 }
@@ -52,7 +64,7 @@ mkdir -p "$steam_root/package"
 while read -r block file sum; do
   i=$((${i:-0} + 1))
   echo "== STEP $(date -u +%H:%M:%S) downloading Steam: $block ($i/$total)"
-  curl -fsSL "$cdn/$file" -o "$work/$file"
+  fetch "$cdn/$file" "$work/$file"
   echo "$sum  $work/$file" | sha256sum -c --quiet
   unzip -qo "$work/$file" -d "$steam_root"
   rm -f "$work/$file"

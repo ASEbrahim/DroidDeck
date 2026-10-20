@@ -94,6 +94,27 @@ cp "$TEST_CDN/${2##*/}" "$4"
         self.assertEqual(0, self.install().returncode)
         self.assertEqual('steamdeck_publicbeta\n', (self.steam / 'package/beta').read_text())
 
+    def test_a_dropped_download_is_tried_again(self):
+        flaky = self.bin / 'curl'
+        flaky.write_text('''#!/bin/bash
+set -eu
+printf '%s\\n' "$2" >> "$TEST_REQUESTS"
+case $2 in
+  *.zip)
+    if [ ! -e "$TEST_REQUESTS.dropped" ]; then
+      : > "$TEST_REQUESTS.dropped"
+      head -c 3 "$TEST_CDN/${2##*/}" > "$4"
+      exit 18
+    fi ;;
+esac
+cp "$TEST_CDN/${2##*/}" "$4"
+''')
+        result = self.install()
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn('failed (try 1 of 5), trying again', result.stderr)
+        self.assertEqual('123456\n', (self.steam / 'package/droiddeck-installed').read_text())
+        self.assertEqual(3, len(self.requests.read_text().splitlines()))
+
     def break_client(self, starts):
         self.assert_installed()
         self.requests.unlink()

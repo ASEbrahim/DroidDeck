@@ -67,6 +67,11 @@ class SessionService : Service() {
     private val steamDownloadMonitor = SteamDownloadMonitor()
     private var downloadMonitorTask: Runnable? = null
     private var downloadActive = false
+    // Steam's first-run client update: no first frame yet and data still coming in. Freezing the guest now
+    // breaks the update's connections, and in-flight packages start again from zero.
+    private var steamClientUpdating = false
+    private var steamClientStartedAt = 0L
+    private var steamClientReceiving = false
     private var suspendDownloadNow = false
     private var suspendPolicy = SessionPrefs.SUSPEND_MANUAL
     private var steamDownloadsInBackground = false
@@ -210,6 +215,9 @@ class SessionService : Service() {
         suspendDownloadNow = false
         steamDownloadMonitor.reset()
         downloadActive = false
+        steamClientUpdating = false
+        steamClientStartedAt = 0L
+        steamClientReceiving = false
         steamSleepToken = null
         completeNativeSleep()
         suspendOperationPending = false
@@ -480,8 +488,11 @@ class SessionService : Service() {
                     if (!pulse.setSinkSuspended(false)) Log.w(TAG, "could not resume audio sink")
                 },
             )
-            mainHandler.post { updateSuspendPolicy() }
-            updateDownloadMonitoring()
+            mainHandler.post {
+                if (gen == sessionGen && SessionState.running) steamClientStartedAt = System.currentTimeMillis()
+                updateDownloadMonitoring()
+                updateSuspendPolicy()
+            }
         }
     }
 
@@ -1151,8 +1162,9 @@ class SessionService : Service() {
         }
         val controller = suspendController ?: return
         val hidden = !activityVisible || !screenOn
-        val downloadsBlockingSuspend = steamDownloadsInBackground && SessionState.mode == MODE_STEAM &&
-            suspendPolicy != SessionPrefs.SUSPEND_NEVER && hidden && downloadActive && !suspendDownloadNow
+        val downloadsBlockingSuspend = SessionState.mode == MODE_STEAM &&
+            suspendPolicy != SessionPrefs.SUSPEND_NEVER && hidden && !suspendDownloadNow &&
+            (steamDownloadsInBackground && downloadActive || steamClientUpdating)
         if (downloadsBlockingSuspend) acquireLocks()
         if (suspendPolicy != SessionPrefs.SUSPEND_NATIVE || !hidden || downloadsBlockingSuspend) {
             completeNativeSleep()
@@ -1496,6 +1508,8 @@ class SessionService : Service() {
             .setContentText(getString(
                 when {
                     SessionState.suspended -> R.string.session_notification_paused
+                    steamClientReceiving && suspendPolicy != SessionPrefs.SUSPEND_NEVER ->
+                        R.string.session_notification_client_update
                     downloadActive && steamDownloadsInBackground &&
                         suspendPolicy != SessionPrefs.SUSPEND_NEVER -> R.string.session_notification_downloads
                     else -> R.string.session_notification
@@ -1505,7 +1519,7 @@ class SessionService : Service() {
             .apply {
                 if (SessionState.suspended) {
                     addAction(Notification.Action.Builder(null, getString(R.string.resume_session), resume).build())
-                } else if (downloadActive && steamDownloadsInBackground &&
+                } else if ((steamClientUpdating || downloadActive && steamDownloadsInBackground) &&
                     suspendPolicy != SessionPrefs.SUSPEND_NEVER) {
                     val suspend = PendingIntent.getService(
                         this@SessionService, 3,
@@ -1526,32 +1540,52 @@ class SessionService : Service() {
         getSystemService(NotificationManager::class.java)?.notify(NOTIFICATION_ID, buildNotification())
     }
 
+    private fun downloadMonitoringWanted() = SessionState.running && SessionState.mode == MODE_STEAM &&
+        suspendPolicy != SessionPrefs.SUSPEND_NEVER && (steamDownloadsInBackground || !SessionState.firstFrameSeen)
+
     private fun updateDownloadMonitoring() {
-        val enabled = SessionState.running && SessionState.mode == MODE_STEAM &&
-            steamDownloadsInBackground && suspendPolicy != SessionPrefs.SUSPEND_NEVER
-        if (!enabled) {
-            val wasActive = downloadActive
+        if (!downloadMonitoringWanted()) {
+            val wasActive = downloadActive || steamClientUpdating
             downloadMonitorTask?.let(mainHandler::removeCallbacks)
             downloadMonitorTask = null
             steamDownloadMonitor.reset()
             downloadActive = false
+            steamClientUpdating = false
+            steamClientReceiving = false
             if (wasActive) refreshNotification()
             return
         }
         if (downloadMonitorTask != null) return
         val poll = object : Runnable {
             override fun run() {
-                if (downloadMonitorTask !== this || !SessionState.running ||
-                    SessionState.mode != MODE_STEAM || !steamDownloadsInBackground ||
-                    suspendPolicy == SessionPrefs.SUSPEND_NEVER) {
+                if (downloadMonitorTask !== this) return
+                if (!downloadMonitoringWanted()) {
+                    // The client showed its first frame and background downloads are off: stop here,
+                    // so a hidden session gets its normal policy again.
+                    updateDownloadMonitoring()
+                    updateSuspendPolicy()
                     return
                 }
                 val wasActive = downloadActive
-                downloadActive = steamDownloadMonitor.poll(
-                    LinuxRuntime.rootDir(this@SessionService),
+                val wasUpdating = steamClientUpdating
+                val wasReceiving = steamClientReceiving
+                val root = LinuxRuntime.rootDir(this@SessionService)
+                val now = System.currentTimeMillis()
+                val appDownloads = steamDownloadMonitor.poll(
+                    root, now,
                     receivedBytes = TrafficStats.getUidRxBytes(android.os.Process.myUid()),
                 )
-                if (wasActive != downloadActive) refreshNotification()
+                downloadActive = steamDownloadsInBackground && appDownloads
+                val clientUpdate = steamDownloadMonitor.clientUpdateActive(root, now)
+                val sinceStart = now - steamClientStartedAt
+                steamClientUpdating = !SessionState.firstFrameSeen && steamClientStartedAt > 0L &&
+                    sinceStart < CLIENT_UPDATE_MAX_MS && (sinceStart < CLIENT_START_GRACE_MS || clientUpdate)
+                steamClientReceiving = steamClientUpdating && clientUpdate
+                if (wasUpdating != steamClientUpdating) {
+                    SessionEvents.record(if (steamClientUpdating) "steam.client_update_active" else "steam.client_update_idle")
+                }
+                if (wasActive != downloadActive || wasUpdating != steamClientUpdating ||
+                    wasReceiving != steamClientReceiving) refreshNotification()
                 updateSuspendPolicy()
                 mainHandler.postDelayed(this, DOWNLOAD_POLL_MS)
             }
@@ -1605,6 +1639,8 @@ class SessionService : Service() {
         private const val STEAM_EXIT_MS = 10_000L
         private const val GAME_LAUNCH_RETRY_MS = 250L
         private const val DOWNLOAD_POLL_MS = 2_000L
+        private const val CLIENT_START_GRACE_MS = 120_000L
+        private const val CLIENT_UPDATE_MAX_MS = 2L * 60L * 60L * 1000L
         private const val STEAM_GAME_REQUEST = "steam-game"
         private const val NO_PAD_SWITCH = "Download/droiddeck-no-pad"
         private const val NO_UINPUT_SWITCH = "Download/droiddeck-no-uinput"
