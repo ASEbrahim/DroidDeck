@@ -28,6 +28,8 @@ class DownloaderResumeTest {
     @Volatile private var misbehave = false
 
     @Before fun setUp() {
+        // one try per call: these tests drive the resume across separate calls
+        Downloader.policy = Downloader.Policy(1, 1, 0, 0, 5_000, 5_000)
         dir = Files.createTempDirectory("downloader-resume").toFile()
         server = ServerSocket(0)
         thread = Thread {
@@ -44,6 +46,7 @@ class DownloaderResumeTest {
     }
 
     @After fun tearDown() {
+        Downloader.policy = Downloader.DEFAULT_POLICY
         server.close()
         dir.deleteRecursively()
     }

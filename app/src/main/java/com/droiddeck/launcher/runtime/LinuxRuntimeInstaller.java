@@ -266,7 +266,7 @@ public final class LinuxRuntimeInstaller {
                     listener.onProgress(Step.DOWNLOADING, downloading,
                             fraction < 0 ? -1 : Math.round(fraction * 100f));
                 }
-            });
+            }, release.sha256);
             if (!ok) {
                 Log.w(TAG, "download failed");
                 keepPartial = true;

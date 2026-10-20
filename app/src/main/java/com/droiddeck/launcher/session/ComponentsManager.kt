@@ -5,6 +5,7 @@ import com.droiddeck.launcher.R
 import android.content.Context
 import android.util.Log
 import com.droiddeck.launcher.core.Downloader
+import com.droiddeck.launcher.core.DownloadProblem
 import com.droiddeck.launcher.core.FileUtils
 import com.droiddeck.launcher.core.GameEnvironment
 import com.droiddeck.launcher.gpu.GpuInfo
@@ -753,9 +754,17 @@ object ComponentsManager {
         if (!force && cache.isFile) runCatching { return parseCatalog(JSONObject(cache.readText())) }
         if (!force) return Catalog(emptyList(), 0)
         val items = JSONArray()
+        // a release that cannot be listed now keeps what the last good refresh found for it
+        val previous = runCatching { JSONObject(cache.readText()).optJSONArray("items") }.getOrNull() ?: JSONArray()
+        var listed = 0
         for ((tag, comp) in RELEASES) {
-            val body = Downloader.downloadString("https://api.github.com/repos/$NIGHTLIES/releases/tags/$tag") ?: continue
-            val assets = runCatching { JSONObject(body).optJSONArray("assets") }.getOrNull() ?: continue
+            val assets = Downloader.downloadString("https://api.github.com/repos/$NIGHTLIES/releases/tags/$tag")
+                ?.let { body -> runCatching { JSONObject(body).optJSONArray("assets") }.getOrNull() }
+            if (assets == null) {
+                for (i in 0 until previous.length()) previous.optJSONObject(i)?.takeIf { it.optString("release") == tag }?.let { items.put(it) }
+                continue
+            }
+            listed++
             for (i in 0 until assets.length()) {
                 val a = assets.getJSONObject(i)
                 val name = a.optString("name")
@@ -764,6 +773,11 @@ object ComponentsManager {
                 items.put(JSONObject().put("file", name).put("comp", comp).put("release", tag)
                     .put("url", a.optString("browser_download_url")).put("size", a.optLong("size")).put("digest", a.optString("digest")))
             }
+        }
+        if (listed == 0) {
+            // nothing could be listed: keep the old list and its date (Downloader.lastFailure() says why)
+            if (previous.length() > 0) runCatching { return parseCatalog(JSONObject(cache.readText())) }
+            return Catalog(emptyList(), 0)
         }
         val out = JSONObject().put("items", items).put("fetchedAt", System.currentTimeMillis() / 1000)
         val tmp = File(cache.parentFile, cache.name + ".tmp")
@@ -868,7 +882,9 @@ object ComponentsManager {
         val dest = File(packagesDir(context), safeName(item.file))
         val part = File(dest.parentFile, dest.name + ".part")
         part.delete()
-        check(Downloader.downloadFile(item.url, part, false) { f -> progress(if (f < 0) -1 else (f * 100).toInt().coerceIn(0, 100)) }) { context.getString(R.string.user_apps_download_failed) }
+        check(Downloader.downloadFile(item.url, part, false, { f -> progress(if (f < 0) -1 else (f * 100).toInt().coerceIn(0, 100)) }, item.digest.substringAfter(':'))) {
+            DownloadProblem.explain(context, context.getString(R.string.user_apps_download_failed))
+        }
         if (!Hashes.sha256(part).equals(item.digest.substringAfter(':'), true)) { part.delete(); error(context.getString(R.string.cmgr_checksum_mismatch)) }
         val info = runCatching { packageInfo(context, part) }.getOrElse { part.delete(); throw it }
         synchronized(lock) { part.renameTo(dest) }

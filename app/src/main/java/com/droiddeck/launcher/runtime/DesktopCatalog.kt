@@ -6,6 +6,7 @@ import android.util.Log
 import com.droiddeck.launcher.BuildConfig
 import com.droiddeck.launcher.R
 import com.droiddeck.launcher.core.Downloader
+import com.droiddeck.launcher.core.DownloadProblem
 import com.droiddeck.launcher.core.FileUtils
 import org.json.JSONObject
 import java.io.File
@@ -90,10 +91,10 @@ object DesktopCatalog {
         try {
             val downloading = context.getString(R.string.user_apps_downloading, entry.name)
             listener?.onProgress(LinuxRuntimeInstaller.Step.DOWNLOADING, downloading, 0)
-            val ok = Downloader.downloadFile(entry.url, download, true) { f ->
+            val ok = Downloader.downloadFile(entry.url, download, true, { f ->
                 listener?.onProgress(LinuxRuntimeInstaller.Step.DOWNLOADING, downloading, if (f < 0) -1 else Math.round(f * 100f))
-            }
-            if (!ok) return context.getString(R.string.user_apps_download_failed)
+            }, entry.sha256)
+            if (!ok) return DownloadProblem.explain(context, context.getString(R.string.user_apps_download_failed))
             listener?.onProgress(LinuxRuntimeInstaller.Step.VERIFYING, context.getString(R.string.rtinst_verifying), -1)
             val actual = Hashes.sha256(download)
             if (!entry.sha256.equals(actual, ignoreCase = true)) return context.getString(R.string.deskpkg_checksum_mismatch)
