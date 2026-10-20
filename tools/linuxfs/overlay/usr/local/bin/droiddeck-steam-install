@@ -38,11 +38,15 @@ fi
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 # A dropped connection (a paused session, a Wi-Fi hiccup) costs one file, not the whole first start.
+# A connection that freezes instead of dropping (across a pause or a Wi-Fi switch) would hang curl for
+# good, so it gives up on one that takes 20 s to open or moves under 1 KB/s for a minute. An HTTP
+# error (exit 22) is not tried again: the file is not there.
 fetch() {
-  local attempt
+  local attempt rc
   for attempt in 1 2 3 4 5; do
-    curl -fsSL "$1" -o "$2" && return 0
+    if curl -fsSL "$1" -o "$2" --connect-timeout 20 --speed-limit 1024 --speed-time 60; then return 0; else rc=$?; fi
     rm -f "$2"
+    [ "$rc" -ne 22 ] || break
     [ "$attempt" -lt 5 ] || break
     echo "== droiddeck-steam-install: ${1##*/} failed (try $attempt of 5), trying again" >&2
     sleep $((attempt * 2))

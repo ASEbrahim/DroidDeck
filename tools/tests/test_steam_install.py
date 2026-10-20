@@ -115,6 +115,36 @@ cp "$TEST_CDN/${2##*/}" "$4"
         self.assertEqual('123456\n', (self.steam / 'package/droiddeck-installed').read_text())
         self.assertEqual(3, len(self.requests.read_text().splitlines()))
 
+    def test_curl_gives_up_on_a_stalled_connection(self):
+        recorder = self.bin / 'curl'
+        recorder.write_text('''#!/bin/bash
+set -eu
+printf '%s\\n' "$*" >> "$TEST_REQUESTS.args"
+printf '%s\\n' "$2" >> "$TEST_REQUESTS"
+cp "$TEST_CDN/${2##*/}" "$4"
+''')
+        self.assertEqual(0, self.install().returncode)
+        args = (self.requests.parent / (self.requests.name + '.args')).read_text().splitlines()
+        self.assertTrue(args)
+        for line in args:
+            self.assertIn('--connect-timeout 20', line)
+            self.assertIn('--speed-limit 1024 --speed-time 60', line)
+
+    def test_an_http_error_is_not_tried_again(self):
+        missing = self.bin / 'curl'
+        missing.write_text('''#!/bin/bash
+set -eu
+printf '%s\\n' "$2" >> "$TEST_REQUESTS"
+case $2 in
+  *.zip) exit 22 ;;
+esac
+cp "$TEST_CDN/${2##*/}" "$4"
+''')
+        result = self.install()
+        self.assertNotEqual(0, result.returncode)
+        self.assertNotIn('trying again', result.stderr)
+        self.assertEqual(2, len(self.requests.read_text().splitlines()))
+
     def break_client(self, starts):
         self.assert_installed()
         self.requests.unlink()

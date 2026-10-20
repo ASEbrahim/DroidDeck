@@ -47,13 +47,14 @@ internal class SteamDownloadMonitor {
 
     // The client's own first-run update (several hundred MB) is not an app download, so the manifests and
     // content_log never show it. It counts as active while the app receives data or Steam's bootstrap log
-    // grows. Call after poll(), which samples the received bytes.
-    fun clientUpdateActive(runtimeRoot: File, now: Long = System.currentTimeMillis()): Boolean {
+    // grows; with network = false only the log counts (after the first frame, when the received data may
+    // be the store or a game's download as well). Call after poll(), which samples the received bytes.
+    fun clientUpdateActive(runtimeRoot: File, now: Long = System.currentTimeMillis(), network: Boolean = true): Boolean {
         val log = File(runtimeRoot, "root/.local/share/Steam/logs/bootstrap_log.txt")
         val length = if (log.isFile) log.length() else -1L
         if (bootstrapLogLength != UNREAD && length > bootstrapLogLength) lastBootstrapGrowthAt = now
         bootstrapLogLength = length
-        return lastNetworkAt > 0L && now - lastNetworkAt <= CLIENT_UPDATE_GRACE_MS ||
+        return network && lastNetworkAt > 0L && now - lastNetworkAt <= CLIENT_UPDATE_GRACE_MS ||
             lastBootstrapGrowthAt > 0L && now - lastBootstrapGrowthAt <= CLIENT_UPDATE_GRACE_MS
     }
 

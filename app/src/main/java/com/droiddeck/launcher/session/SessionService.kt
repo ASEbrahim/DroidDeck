@@ -67,8 +67,9 @@ class SessionService : Service() {
     private val steamDownloadMonitor = SteamDownloadMonitor()
     private var downloadMonitorTask: Runnable? = null
     private var downloadActive = false
-    // Steam's first-run client update: no first frame yet and data still coming in. Freezing the guest now
-    // breaks the update's connections, and in-flight packages start again from zero.
+    // Steam's first-run client update: data still coming in before the first frame, or Steam's bootstrap log
+    // still growing after it (its "Updating Steam" window is a frame too). Freezing the guest now breaks the
+    // update's connections, and in-flight packages start again from zero.
     private var steamClientUpdating = false
     private var steamClientStartedAt = 0L
     private var steamClientReceiving = false
@@ -1541,7 +1542,8 @@ class SessionService : Service() {
     }
 
     private fun downloadMonitoringWanted() = SessionState.running && SessionState.mode == MODE_STEAM &&
-        suspendPolicy != SessionPrefs.SUSPEND_NEVER && (steamDownloadsInBackground || !SessionState.firstFrameSeen)
+        suspendPolicy != SessionPrefs.SUSPEND_NEVER &&
+        (steamDownloadsInBackground || !SessionState.firstFrameSeen || steamClientUpdating)
 
     private fun updateDownloadMonitoring() {
         if (!downloadMonitoringWanted()) {
@@ -1560,8 +1562,8 @@ class SessionService : Service() {
             override fun run() {
                 if (downloadMonitorTask !== this) return
                 if (!downloadMonitoringWanted()) {
-                    // The client showed its first frame and background downloads are off: stop here,
-                    // so a hidden session gets its normal policy again.
+                    // The client update is over (first frame shown, bootstrap log quiet) and background
+                    // downloads are off: stop here, so a hidden session gets its normal policy again.
                     updateDownloadMonitoring()
                     updateSuspendPolicy()
                     return
@@ -1576,10 +1578,13 @@ class SessionService : Service() {
                     receivedBytes = TrafficStats.getUidRxBytes(android.os.Process.myUid()),
                 )
                 downloadActive = steamDownloadsInBackground && appDownloads
-                val clientUpdate = steamDownloadMonitor.clientUpdateActive(root, now)
+                val framed = SessionState.firstFrameSeen
+                // After the first frame only the bootstrap log counts, and only while it was counting
+                // already: a frame ends the start grace, not an update still being written.
+                val clientUpdate = steamDownloadMonitor.clientUpdateActive(root, now, network = !framed)
                 val sinceStart = now - steamClientStartedAt
-                steamClientUpdating = !SessionState.firstFrameSeen && steamClientStartedAt > 0L &&
-                    sinceStart < CLIENT_UPDATE_MAX_MS && (sinceStart < CLIENT_START_GRACE_MS || clientUpdate)
+                steamClientUpdating = steamClientStartedAt > 0L && sinceStart < CLIENT_UPDATE_MAX_MS &&
+                    (if (framed) wasUpdating && clientUpdate else sinceStart < CLIENT_START_GRACE_MS || clientUpdate)
                 steamClientReceiving = steamClientUpdating && clientUpdate
                 if (wasUpdating != steamClientUpdating) {
                     SessionEvents.record(if (steamClientUpdating) "steam.client_update_active" else "steam.client_update_idle")
