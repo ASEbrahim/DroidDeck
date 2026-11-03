@@ -3,8 +3,8 @@
 MaliBridge by ASEbrahim: https://github.com/ASEbrahim/MaliBridge
 (GPL-3.0-or-later with the additional terms in NOTICE here, copied unchanged from the project).
 
-DroidDeck builds MaliBridge from the `external/MaliBridge` submodule, pinned at 48477fe
-(v0.5.4) and not modified. Its Vulkan ICD runs inside the Linux runtime and forwards each call
+DroidDeck builds MaliBridge from the `external/MaliBridge` submodule, at a pinned
+version and not modified. Its Vulkan ICD runs inside the Linux runtime and forwards each call
 over a Unix socket to its server, which runs in the app on the phone's own Vulkan driver.
 DroidDeck uses it only on a GPU without Adreno's KGSL; an Adreno keeps Turnip.
 
