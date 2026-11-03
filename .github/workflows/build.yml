@@ -169,9 +169,6 @@ jobs:
         run: test "$(git rev-parse 'HEAD^{tree}')" = "$SOURCE_TREE"
       - name: Resolve the pinned Android NDK
         run: bash tools/ci/resolve-ndk.sh
-      - name: Check out MaliBridge
-        run: git submodule update --init external/MaliBridge
-
       - name: Plan component identities
         id: plan
         run: python3 tools/components/prepare.py plan
@@ -234,7 +231,6 @@ jobs:
             ${{ steps.preloads.outputs.cache-hit != 'true' && 'runtime' || '' }}
             ${{ steps.component-preloads.outputs.arm64 != 'true' && 'arm64-preloads' || '' }}
             ${{ steps.comet.outputs.cache-hit != 'true' && 'comet' || '' }}
-            vkbridge
         run: python3 tools/components/prepare.py tools
 
       - name: Build changed ARM64 preloads
@@ -245,8 +241,15 @@ jobs:
         if: steps.preloads.outputs.cache-hit != 'true'
         run: python3 tools/components/prepare.py runtime
 
-      - name: Build the Mali bridge's Linux side
+      - name: Fetch the pinned MaliBridge release (tools/malibridge/release.env)
         run: python3 tools/components/prepare.py vkbridge
+
+      - name: Check the pinned MaliBridge source
+        run: |
+          set -euo pipefail
+          . tools/malibridge/release.env
+          tag=$(git ls-remote "https://github.com/${MALIBRIDGE_REPO}" "refs/tags/${MALIBRIDGE_TAG}" "refs/tags/${MALIBRIDGE_TAG}^{}" | awk 'END {print $1}')
+          [ "$tag" = "$MALIBRIDGE_SOURCE_COMMIT" ] || { echo "::error::tag ${MALIBRIDGE_TAG} is at ${tag:-nothing}, release.env pins ${MALIBRIDGE_SOURCE_COMMIT}"; exit 1; }
 
       - name: Fetch the Debian image the preloads build in
         if: steps.component-preloads.outputs.x86 != 'true'
@@ -284,6 +287,9 @@ jobs:
           test -f "$VKB" && test -f "$D/usr/local/share/vkbridge/droidbridge_icd.json" && test -f "$D/usr/local/bin/droiddeck-vkbridge-smoke"
           VKB_NEED=$(readelf -d "$VKB" | sed -n 's/.*NEEDED.*\[\(.*\)\]/\1/p' | grep -vx 'libc.so.6' | grep -vx 'ld-linux-aarch64.so.1' || true)
           [ -z "$VKB_NEED" ] || { echo "::error::the bridge ICD needs $VKB_NEED"; exit 1; }
+          for lib in libvkbridge_server.so libvkbridge_jni.so; do
+            readelf -h "app/src/main/jniLibs/arm64-v8a/$lib" | grep -q 'Machine:.*AArch64' || { echo "::error::$lib is not an arm64 library"; exit 1; }
+          done
           [ "$(readelf -Ws "$VKB" | awk '$4 == "FUNC" && $5 == "GLOBAL" && $7 != "UND" {sub(/@.*/, "", $8); print $8}' | grep -c '^vk_icd')" = 3 ] || { echo "::error::the bridge ICD does not export the loader interface"; exit 1; }
 
       - name: Build GOG Galaxy companion
@@ -570,9 +576,6 @@ jobs:
           if [ "$sha" != "$PROOT_PACK_SHA256" ]; then
             echo "::warning::built proot pack $sha does not match tools/packs/proot/release.env ($PROOT_PACK_SHA256). This build publishes the pack it just built. Source builds keep downloading the pinned pack until release.env is updated."
           fi
-
-      - name: Check out MaliBridge
-        run: git submodule update --init external/MaliBridge
 
       - name: Build
         id: build

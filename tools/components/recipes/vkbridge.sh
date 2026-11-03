@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
-test -f external/MaliBridge/scripts/build-client-linux.sh
-bash external/MaliBridge/scripts/build-client-linux.sh app/src/main/assets/linuxfs aarch64-linux-gnu-gcc
+. tools/malibridge/release.env
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+bash tools/packs/fetch-verified.sh \
+  "https://github.com/${MALIBRIDGE_REPO}/releases/download/${MALIBRIDGE_TAG}/malibridge-droiddeck.tar.zst" \
+  "$MALIBRIDGE_SHA256" "$work/malibridge-droiddeck.tar.zst"
+python3 tools/malibridge/place.py "$work/malibridge-droiddeck.tar.zst"

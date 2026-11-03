@@ -228,16 +228,17 @@
   "vkbridge": {
     "script": "tools/components/recipes/vkbridge.sh",
     "inputs": [
-      "external/MaliBridge",
+      "tools/malibridge/release.env",
+      "tools/malibridge/place.py",
+      "tools/packs/fetch-verified.sh",
       "tools/components/recipes/vkbridge.sh"
     ],
     "outputs": [
       "app/src/main/assets/linuxfs/usr/local/lib/vkbridge/libvulkan_droidbridge.so",
       "app/src/main/assets/linuxfs/usr/local/share/vkbridge/droidbridge_icd.json",
-      "app/src/main/assets/linuxfs/usr/local/bin/droiddeck-vkbridge-smoke"
-    ],
-    "packages": [
-      "gcc-aarch64-linux-gnu"
+      "app/src/main/assets/linuxfs/usr/local/bin/droiddeck-vkbridge-smoke",
+      "app/src/main/jniLibs/arm64-v8a/libvkbridge_server.so",
+      "app/src/main/jniLibs/arm64-v8a/libvkbridge_jni.so"
     ]
   },
   "dirt-ws2": {

@@ -41,10 +41,6 @@ if [[ ! -x "${java_dir}/bin/java" ]]; then
     echo "Java 17 not found at ${java_dir}; set JAVA_HOME." >&2
     exit 1
 fi
-if [[ ! -f "${repo_root}/external/MaliBridge/scripts/build-client-linux.sh" ]]; then
-    echo "external/MaliBridge is empty; run: git submodule update --init" >&2
-    exit 1
-fi
 if ! command -v docker >/dev/null 2>&1; then
     echo "Docker is required to cross-compile the glibc ARM64 preload libraries." >&2
     exit 1
@@ -139,7 +135,6 @@ docker run --rm --platform "${docker_platform}" \
             -o "$d/libssbs.so" tools/linuxfs/ssbs/ssbs_adapter.c -ldl
         aarch64-linux-gnu-strip --strip-unneeded "$d/libssbs.so"
         mkdir -p "$d/usr/local/bin"
-        external/MaliBridge/scripts/build-client-linux.sh "$d" aarch64-linux-gnu-gcc
         aarch64-linux-gnu-gcc -O2 -Wall -Wextra -o "$d/usr/local/bin/droiddeck-clipboard" tools/linuxfs/clipboard/clipboard.c -ldl
         aarch64-linux-gnu-strip --strip-unneeded "$d/usr/local/bin/droiddeck-clipboard"
         for script in tools/linuxfs/overlay/usr/local/bin/droiddeck-* tools/linuxfs/overlay/usr/local/bin/steam-compatibility; do
@@ -228,6 +223,12 @@ if [[ -f "${repo_root}/tools/gamescope/release.env" ]]; then
     zstd -dc "${gamescope_archive}" | tar -xf - -C "${linuxfs_dir}"
     test -f "${linuxfs_dir}/usr/local/bin/gamescope"
 fi
+
+. "${repo_root}/tools/malibridge/release.env"
+malibridge_archive=$(cached "${MALIBRIDGE_SHA256}" malibridge-droiddeck.tar.zst \
+    bash -c 'curl -fsSL --retry 5 --retry-all-errors --connect-timeout 20 -o "$out" "$0"' \
+    "https://github.com/${MALIBRIDGE_REPO}/releases/download/${MALIBRIDGE_TAG}/malibridge-droiddeck.tar.zst")
+python3 "${repo_root}/tools/malibridge/place.py" "${malibridge_archive}"
 
 . "${repo_root}/tools/linuxfs/uruntime.env"
 uruntime_binary=$(cached "${URUNTIME_SHA256}" "${URUNTIME_ASSET}" \

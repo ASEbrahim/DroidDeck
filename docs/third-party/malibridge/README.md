@@ -3,8 +3,11 @@
 MaliBridge by ASEbrahim: https://github.com/ASEbrahim/MaliBridge
 (GPL-3.0-or-later with the additional terms in NOTICE here, copied unchanged from the project).
 
-DroidDeck builds MaliBridge from the `external/MaliBridge` submodule, pinned at 48477fe
-(v0.5.4) and not modified. Its Vulkan ICD runs inside the Linux runtime and forwards each call
+DroidDeck's build downloads MaliBridge from its GitHub releases at the version in
+`tools/malibridge/release.env` and checks the file's SHA-256 before using it. The release
+file holds the bridge's server libraries, its Vulkan ICD and licences, built unmodified from the
+source tag that `release.env` also pins (commit and source archive SHA-256), so anyone can
+check out that tag and rebuild it. The bridge's Vulkan ICD runs inside the Linux runtime and forwards each call
 over a Unix socket to its server, which runs in the app on the phone's own Vulkan driver.
 DroidDeck uses it only on a GPU without Adreno's KGSL; an Adreno keeps Turnip.
 
@@ -29,5 +32,5 @@ MaliBridge's own credits, in its README, include:
 - GameNative (GPL-3.0), wallentx's placed-memory layer for DroidDeck (MIT), Arm's published errata,
   ANGLE's Mali workarounds, and design notes from Winlator's Vortek
 
-Each keeps its own licence and notice in the submodule (`third_party/` and the files that name
+Each keeps its own licence and notice in the MaliBridge source (`third_party/` and the files that name
 them).
